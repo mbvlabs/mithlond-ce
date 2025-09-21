@@ -83,3 +83,7 @@ vet:
 
 golines:
 	@golines -w -m 100 controllers models router router/routes 
+
+move-boot:
+	go build -o boot cmd/boot/main.go  && scp -i ~/.ssh/mithlond_test ./boot root@91.98.19.254:/root
+
