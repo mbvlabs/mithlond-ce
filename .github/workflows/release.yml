@@ -8,8 +8,6 @@ on:
 jobs:
   release:
     runs-on: ubuntu-latest
-    env:
-      VERSION: ${{ github.ref_name }}
     steps:
     - uses: actions/checkout@v4
     
@@ -24,11 +22,11 @@ jobs:
     
     - name: Build app binary
       run: |
-        CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s -X main.releaseVersion=${VERSION}" -o mithlond-linux-amd64 ./cmd/app
+        CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s -X main.releaseVersion=${{ steps.version.outputs.VERSION }}" -o mithlond-linux-amd64 ./cmd/app
     
     - name: Build boot binary
       run: |
-        CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s -X main.releaseVersion=${VERSION}" -o mithlond-boot-linux-amd64 ./cmd/boot
+        CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s -X main.releaseVersion=${{ steps.version.outputs.VERSION }}" -o mithlond-boot-linux-amd64 ./cmd/boot
     
     - name: Generate checksums
       run: |
