@@ -268,6 +268,7 @@ func main() {
 	if releaseVersion == "" {
 		envVars["LATEST_RELEASE"] = "latest"
 	}
+	envVars["ROOT_DOMAIN"] = rootDomain
 
 	caddyPassword := randomString(passwordLength)
 	hash, err := bcrypt.GenerateFromPassword([]byte(caddyPassword), bcrypt.DefaultCost)

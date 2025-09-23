@@ -844,7 +844,7 @@ DEFAULT_SENDER_SIGNATURE=info@$DOMAIN_NAME
 PASSWORD_SALT=$PASSWORD_SALT
 
 PROJECT_NAME=Mithlond
-APP_DOMAIN=mithlond.$DOMAIN_NAME
+APP_DOMAIN=mithlond.$ROOT_DOMAIN
 APP_PROTOCOL=https
 
 SUDO_USER=$USER_NAME
@@ -959,7 +959,7 @@ log "Installation process completed successfully!"
 # echo "=========================================="
 # echo "Mithlond Installation Complete!"
 # echo "=========================================="
-# echo "Access your application at: https://mithlond.$DOMAIN_NAME"
+# echo "Access your application at: https://mithlond.$ROOT_DOMAIN"
 # echo 
 # echo "Admin credentials:"
 # echo "Email: admin@admin.com"
