@@ -838,8 +838,8 @@ log "Initializing database..."
 cat > "$CONFIG_DIR/mithlond.env" << EOF
 ENVIRONMENT=production
 
-SERVER_HOST=localhost
 SERVER_HOST=0.0.0.0
+SERVER_PORT=8080
 DEFAULT_SENDER_SIGNATURE=info@$ROOT_DOMAIN
 
 DB_KIND=sqlite3
