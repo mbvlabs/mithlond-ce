@@ -71,7 +71,6 @@ live-templ:
 live-tailwind:
 	./bin/tailwindcli -i ./css/base.css -o ./assets/css/tw.css --watch
 
-[parallel]
 run: live-tailwind live-templ live-server 
 
 # code quality
@@ -85,5 +84,5 @@ golines:
 	@golines -w -m 100 controllers models router router/routes 
 
 move-boot:
-	go build -o boot cmd/boot/main.go  && scp -i ~/.ssh/mithlond_test ./boot root@91.98.19.254:/root
+	go build -o boot cmd/boot/main.go  && scp -i ~/.ssh/test_key ./boot root@91.98.31.175:/root
 

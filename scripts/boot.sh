@@ -3,6 +3,11 @@ set -euo pipefail
 
 LOG_FILE="/var/log/mithlond-install.log"
 
+INSTALL_DIR="/opt/mithlond"
+CONFIG_DIR="/etc/mithlond"
+
+TEMP_DIR="/tmp/mithlond-install"
+
 PROMETHEUS_VERSION="${PROMETHEUS_VERSION:-latest}"
 PROMETHEUS_USER="prometheus"
 PROMETHEUS_GROUP="prometheus"
@@ -739,156 +744,218 @@ fi
 
 log "Starting caddy installation..."
 
-# log "Starting mithlond app setup..."
-#
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
+apt-get update
+apt-get install -y caddy
+
+log "Configuring Caddy for telemetry services..."
+
+cat > /etc/caddy/Caddyfile << EOF
+# Mithlond application reverse proxy configuration
+${MITHLOND_DOMAIN_NAME:-your-domain.com} {
+	basic_auth {
+		${CADDY_USER_NAME} ${CADDY_PASSWORD}
+    }
+
+    reverse_proxy localhost:8080
+}
+
+${TEL_PROM_DOMAIN_NAME:-your-domain.com} {
+	basic_auth {
+		${CADDY_USER_NAME} ${CADDY_PASSWORD}
+    }
+
+	reverse_proxy localhost:9090
+}
+
+${TEL_LOKI_DOMAIN_NAME:-your-domain.com} {
+	basic_auth {
+		${CADDY_USER_NAME} ${CADDY_PASSWORD}
+    }
+
+    reverse_proxy localhost:3100
+}
+
+${TEL_TEMPO_DOMAIN_NAME:-your-domain.com} {
+	basic_auth {
+		${CADDY_USER_NAME} ${CADDY_PASSWORD}
+    }
+
+    reverse_proxy localhost:3200
+}
+
+${TEL_ALLOY_DOMAIN_NAME:-your-domain.com} {
+	basic_auth {
+		${CADDY_USER_NAME} ${CADDY_PASSWORD}
+    }
+
+    # Route for /ingestor
+    route /ingestor* {
+            uri strip_prefix /ingestor
+            reverse_proxy localhost:4321
+    }
+
+    reverse_proxy localhost:12345
+}
+EOF
+
+mkdir -p /var/log/caddy
+chown caddy:caddy /var/log/caddy
+
+log "Enabling Caddy service (but not starting yet)..."
+systemctl enable caddy
+
+log "Starting mithlond app setup..."
+
 # log "Downloading Mithlond binary version $LATEST_RELEASE..."
 # curl -fsSL "https://github.com/$REPO_OWNER/$REPO_NAME/releases/download/$LATEST_RELEASE/mithlond-linux-amd64" -o mithlond-linux-amd64
-#
-# mkdir -p "$INSTALL_DIR"
-# mkdir -p "$CONFIG_DIR"
-#
-# cp "$TEMP_DIR/mithlond-linux-amd64" "$INSTALL_DIR/mithlond"
-# chmod +x "$INSTALL_DIR/mithlond"
-#
-# touch "$INSTALL_DIR/mithlond_prod.db"
-#
-# chown -R "$USER_NAME:$USER_NAME" "$INSTALL_DIR"
-# chmod 755 "$INSTALL_DIR"
-# chmod 644 "$INSTALL_DIR/mithlond_prod.db"
-#
-# log "Generating security keys..."
-# SESSION_KEY=$(openssl rand -hex 32)
-# SESSION_ENCRYPTION_KEY=$(openssl rand -hex 32)
-# TOKEN_SIGNING_KEY=$(openssl rand -hex 32)
-# PASSWORD_SALT=$(openssl rand -hex 16)
-#
+
+mkdir -p "$INSTALL_DIR"
+mkdir -p "$CONFIG_DIR"
+
+cp "$TEMP_DIR/mithlond-linux-amd64" "$INSTALL_DIR/mithlond"
+chmod +x "$INSTALL_DIR/mithlond"
+
+touch "$INSTALL_DIR/mithlond_prod.db"
+
+chown -R "$USER_NAME:$USER_NAME" "$INSTALL_DIR"
+chmod 755 "$INSTALL_DIR"
+chmod 644 "$INSTALL_DIR/mithlond_prod.db"
+
+log "Generating security keys..."
+SESSION_KEY=$(openssl rand -hex 32)
+SESSION_ENCRYPTION_KEY=$(openssl rand -hex 32)
+TOKEN_SIGNING_KEY=$(openssl rand -hex 32)
+PASSWORD_SALT=$(openssl rand -hex 16)
+
 # export SESSION_KEY SESSION_ENCRYPTION_KEY TOKEN_SIGNING_KEY PASSWORD_SALT
-#
-# log "Initializing database..."
+
+log "Initializing database..."
 # sudo -u "$USER_NAME" env PASSWORD_SALT="$PASSWORD_SALT" "$TEMP_DIR/mithlond-boot-linux-amd64"
-#
+
 # log "Creating environment configuration..."
-# cat > "$CONFIG_DIR/mithlond.env" << EOF
-# ENVIRONMENT=production
-# SERVER_HOST=0.0.0.0
-# SERVER_PORT=8080
-# DEFAULT_SENDER_SIGNATURE=info@$DOMAIN_NAME
-#
-# PASSWORD_SALT=$PASSWORD_SALT
-#
-# PROJECT_NAME=Mithlond
-# APP_DOMAIN=mithlond.$DOMAIN_NAME
-# APP_PROTOCOL=https
-#
-# SUDO_USER=$USER_NAME
-# SUDO_PASSWORD=$USER_PASSWORD
-#
-# SESSION_KEY=$SESSION_KEY
-# SESSION_ENCRYPTION_KEY=$SESSION_ENCRYPTION_KEY
-# TOKEN_SIGNING_KEY=$TOKEN_SIGNING_KEY
-#
-# AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
-# AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
-#
-# CLOUDFLARE_EMAIL=$CLOUDFLARE_EMAIL
-# CLOUDFLARE_APIKEY=$CLOUDFLARE_API_KEY
-#
-# TELEMETRY_SERVICE_NAME=mithlond
-# TELEMETRY_OTLP_ENDPOINT=http://localhost:4317
-#
-# DB_FILE_PATH=$INSTALL_DIR/mithlond_prod.db
-# EOF
-#
-# chown "$USER_NAME:$USER_NAME" "$CONFIG_DIR/mithlond.env"
-#
-# log "Creating systemd service..."
-# cat > /etc/systemd/system/mithlond.service << EOF
-# [Unit]
-# Description=Mithlond Application Server
-# After=network.target
-#
-# [Service]
-# Type=simple
-# User=$USER_NAME
-# Group=$USER_NAME
-# WorkingDirectory=$INSTALL_DIR
-# ExecStart=$INSTALL_DIR/mithlond
-# Restart=always
-# RestartSec=10
-# EnvironmentFile=$CONFIG_DIR/mithlond.env
-#
-# NoNewPrivileges=true
-# PrivateTmp=true
-# ProtectSystem=strict
-# ProtectHome=true
-# ReadWritePaths=$INSTALL_DIR /etc/prometheus
-#
-# [Install]
-# WantedBy=multi-user.target
-# EOF
-#
-# log "Creating update socket unit..."
-# cat > /etc/systemd/system/mithlond-update.socket << EOF
-# [Unit]
-# Description=Mithlond Update Socket
-#
-# [Socket]
-# ListenStream=/run/mithlond-update.sock
-# SocketMode=0660
-# SocketUser=$USER_NAME
-# SocketGroup=$USER_NAME
-#
-# [Install]
-# WantedBy=sockets.target
-# EOF
-#
-# log "Creating update service unit..."
-# cat > /etc/systemd/system/mithlond-update.service << EOF
-# [Unit]
-# Description=Mithlond Application Update
-# After=network.target
-#
-# [Service]
-# Type=oneshot
-# User=root
-# WorkingDirectory=$INSTALL_DIR
-# ExecStart=$INSTALL_DIR/update-app.sh
-# StandardOutput=journal
-# StandardError=journal
-# StandardInput=socket
-# EOF
-#
-# log "Reloading systemd daemon, enabling, and starting mithlond service..."
-# sudo systemctl daemon-reload
-# sudo systemctl enable mithlond
-# sudo systemctl enable mithlond-update.socket
-# sudo systemctl start mithlond-update.socket
-#
-# if [[ -f /etc/systemd/system/mithlond.service ]]; then
-#     log "Service file created successfully"
-#     log "File size: $(stat -c%s /etc/systemd/system/mithlond.service) bytes"
-#     log "File permissions: $(stat -c%a /etc/systemd/system/mithlond.service)"
-#     log "File owner: $(stat -c%U:%G /etc/systemd/system/mithlond.service)"
-# else
-#     error_exit "Failed to create service file"
-# fi
-#
-# systemctl daemon-reload
-# if [[ $? -eq 0 ]]; then
-#     log "Systemd daemon reloaded successfully"
-# else
-#     error_exit "Failed to reload systemd daemon"
-# fi
-#
-# systemctl enable mithlond
-# if [[ $? -eq 0 ]]; then
-#     log "Mithlond service enabled successfully"
-# else
-#     error_exit "Failed to enable mithlond service"
-# fi
-#
-# log "Installation process completed successfully!"
-#
+cat > "$CONFIG_DIR/mithlond.env" << EOF
+ENVIRONMENT=production
+SERVER_HOST=0.0.0.0
+SERVER_PORT=8080
+DEFAULT_SENDER_SIGNATURE=info@$DOMAIN_NAME
+
+PASSWORD_SALT=$PASSWORD_SALT
+
+PROJECT_NAME=Mithlond
+APP_DOMAIN=mithlond.$DOMAIN_NAME
+APP_PROTOCOL=https
+
+SUDO_USER=$USER_NAME
+SUDO_PASSWORD=$USER_PASSWORD
+
+SESSION_KEY=$SESSION_KEY
+SESSION_ENCRYPTION_KEY=$SESSION_ENCRYPTION_KEY
+TOKEN_SIGNING_KEY=$TOKEN_SIGNING_KEY
+
+AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+
+CLOUDFLARE_EMAIL=$CLOUDFLARE_EMAIL
+CLOUDFLARE_APIKEY=$CLOUDFLARE_API_KEY
+
+TELEMETRY_SERVICE_NAME=mithlond
+TELEMETRY_OTLP_ENDPOINT=http://localhost:4317
+
+DB_FILE_PATH=$INSTALL_DIR/mithlond_prod.db
+EOF
+
+chown "$USER_NAME:$USER_NAME" "$CONFIG_DIR/mithlond.env"
+
+log "Creating systemd service..."
+cat > /etc/systemd/system/mithlond.service << EOF
+[Unit]
+Description=Mithlond Application Server
+After=network.target
+
+[Service]
+Type=simple
+User=$USER_NAME
+Group=$USER_NAME
+WorkingDirectory=$INSTALL_DIR
+ExecStart=$INSTALL_DIR/mithlond
+Restart=always
+RestartSec=10
+EnvironmentFile=$CONFIG_DIR/mithlond.env
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=$INSTALL_DIR /etc/prometheus
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+log "Creating update socket unit..."
+cat > /etc/systemd/system/mithlond-update.socket << EOF
+[Unit]
+Description=Mithlond Update Socket
+
+[Socket]
+ListenStream=/run/mithlond-update.sock
+SocketMode=0660
+SocketUser=$USER_NAME
+SocketGroup=$USER_NAME
+
+[Install]
+WantedBy=sockets.target
+EOF
+
+log "Creating update service unit..."
+cat > /etc/systemd/system/mithlond-update.service << EOF
+[Unit]
+Description=Mithlond Application Update
+After=network.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=$INSTALL_DIR
+ExecStart=$INSTALL_DIR/update-app.sh
+StandardOutput=journal
+StandardError=journal
+StandardInput=socket
+EOF
+
+log "Reloading systemd daemon, enabling, and starting mithlond service..."
+
+sudo systemctl enable mithlond
+sudo systemctl enable mithlond-update.socket
+sudo systemctl start mithlond-update.socket
+
+if [[ -f /etc/systemd/system/mithlond.service ]]; then
+    log "Service file created successfully"
+    log "File size: $(stat -c%s /etc/systemd/system/mithlond.service) bytes"
+    log "File permissions: $(stat -c%a /etc/systemd/system/mithlond.service)"
+    log "File owner: $(stat -c%U:%G /etc/systemd/system/mithlond.service)"
+else
+    error_exit "Failed to create service file"
+fi
+
+systemctl daemon-reload
+if [[ $? -eq 0 ]]; then
+    log "Systemd daemon reloaded successfully"
+else
+    error_exit "Failed to reload systemd daemon"
+fi
+
+systemctl enable mithlond
+if [[ $? -eq 0 ]]; then
+    log "Mithlond service enabled successfully"
+else
+    error_exit "Failed to enable mithlond service"
+fi
+
+log "Installation process completed successfully!"
+
 # echo "=========================================="
 # echo "Mithlond Installation Complete!"
 # echo "=========================================="
@@ -901,5 +968,3 @@ log "Starting caddy installation..."
 # echo "=========================================="
 # echo "SSH access: ssh -i path-to-private-key -p $SSH_PORT $USER_NAME@$(curl -s -4 ifconfig.me)"
 # echo "=========================================="
-
-reboot

@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"log"
 	"log/slog"
+	"math/big"
 	"os"
 	"os/exec"
 	"strings"
@@ -13,8 +15,25 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/cloudflare/cloudflare-go/v6"
+	"github.com/cloudflare/cloudflare-go/v6/dns"
+	"github.com/cloudflare/cloudflare-go/v6/option"
+	"github.com/cloudflare/cloudflare-go/v6/zones"
 	"github.com/mbvlabs/mithlond-ce/scripts"
+	"golang.org/x/crypto/bcrypt"
 )
+
+const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+const passwordLength = 8
+
+func randomString(length int) string {
+	result := make([]byte, length)
+	for i := range length {
+		idx, _ := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		result[i] = charset[idx.Int64()]
+	}
+	return string(result)
+}
 
 var (
 	focusedStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
@@ -26,6 +45,14 @@ var (
 
 	focusedButton = focusedStyle.Render("[ Submit ]")
 	blurredButton = fmt.Sprintf("[ %s ]", blurredStyle.Render("Submit"))
+
+	domainPrefix = map[string]string{
+		"MITHLOND_DOMAIN_NAME":  "test-mithlond",
+		"TEL_PROM_DOMAIN_NAME":  "test-telemetry-prometheus",
+		"TEL_LOKI_DOMAIN_NAME":  "test-telemetry-loki",
+		"TEL_TEMPO_DOMAIN_NAME": "test-telemetry-tempo",
+		"TEL_ALLOY_DOMAIN_NAME": "test-telemetry-alloy",
+	}
 )
 
 type model struct {
@@ -57,17 +84,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Batch(cmds...)
 
-		// Set focus to next input
 		case "tab", "shift+tab", "enter", "up", "down":
 			s := msg.String()
 
-			// Did the user press enter while the submit button was focused?
-			// If so, exit.
 			if s == "enter" && m.focusIndex == len(m.inputs) {
 				return m, tea.Quit
 			}
 
-			// Cycle indexes
 			if s == "up" || s == "shift+tab" {
 				m.focusIndex--
 			} else {
@@ -99,7 +122,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Handle character input and blinking
 	cmd := m.updateInputs(msg)
 
 	return m, cmd
@@ -140,15 +162,17 @@ func (m model) View() string {
 }
 
 func main() {
+	ctx := context.Background()
+
 	m := model{
-		inputs: make([]textinput.Model, 4),
+		inputs: make([]textinput.Model, 8),
 	}
 
 	var t textinput.Model
 	for i := range m.inputs {
 		t = textinput.New()
 		t.Cursor.Style = cursorStyle
-		t.CharLimit = 32
+		t.CharLimit = 150
 
 		switch i {
 		case 0:
@@ -158,29 +182,30 @@ func main() {
 			t.TextStyle = focusedStyle
 		case 1:
 			t.Placeholder = "Enter Password for ssh access"
-			t.EchoMode = textinput.EchoPassword
-			t.EchoCharacter = '•'
+			// t.EchoMode = textinput.EchoPassword
+			// t.EchoCharacter = '•'
 		case 2:
 			t.Placeholder = "Confirm Password for ssh access"
-			t.EchoMode = textinput.EchoPassword
-			t.EchoCharacter = '•'
-		// case 3:
-		// 	t.Placeholder = "Enter Cloudflare email"
-		// case 4:
-		// 	t.Placeholder = "Enter Cloudflare API key"
-		// 	t.EchoMode = textinput.EchoPassword
-		// 	t.EchoCharacter = '•'
+			// t.EchoMode = textinput.EchoPassword
+			// t.EchoCharacter = '•'
+		case 3:
+			t.Placeholder = "Enter Cloudflare email"
+		case 4:
+			t.Placeholder = "Enter Cloudflare API key"
+			// t.EchoMode = textinput.EchoPassword
+			// t.EchoCharacter = '•'
 		// case 5:
 		// 	t.Placeholder = "Enter AWS Access Key ID"
 		// case 6:
 		// 	t.Placeholder = "Enter AWS Secret Access Key"
 		// 	t.EchoMode = textinput.EchoPassword
 		// 	t.EchoCharacter = '•'
-		// case 7:
-		// 	t.Placeholder = "Enter domain name (e.g., example.com)"
-		case 3:
+		case 5:
 			t.Placeholder = "Enter SSH port (default 22)"
-			t.SetValue("22")
+		case 6:
+			t.Placeholder = "Enter VPS IPv4"
+		case 7:
+			t.Placeholder = "Enter domain name (e.g., example.com)"
 		}
 
 		m.inputs[i] = t
@@ -195,6 +220,9 @@ func main() {
 
 	finalModel := inputs.(model)
 
+	var domains []string
+	var rootDomain string
+
 	envVars := make(map[string]string, 9)
 	for _, input := range finalModel.inputs {
 		fmt.Printf("%s: %s\n", input.Placeholder, input.Value())
@@ -205,21 +233,41 @@ func main() {
 			envVars["USER_PASSWORD"] = input.Value()
 		// case "Enter Cloudflare email":
 		// 	envvars["CF_EMAIL"] = input.Value()
-		// case "Enter Cloudflare API key":
-		// 	envvars["CF_API_KEY"] = input.Value()
+		case "Enter Cloudflare API key":
+			envVars["CF_API_KEY"] = input.Value()
 		// case "Enter AWS Access Key ID":
 		// 	envvars["AWS_ACCESS_KEY_ID"] = input.Value()
 		// case "Enter AWS Secret Access Key":
 		// 	envvars["AWS_SECRET_ACCESS_KEY"] = input.Value()
-		// case "Enter domain name (e.g., example.com)":
-		// 	envvars["DOMAIN_NAME"] = input.Value()
+		case "Enter domain name (e.g., example.com)":
+			rd := input.Value()
+			rootDomain = rd
+
+			for envName, prefix := range domainPrefix {
+				fullDomain := prefix + "." + rootDomain
+
+				envVars[envName] = fullDomain
+
+				domains = append(domains, fullDomain)
+			}
+
 		case "Enter SSH port (default 22)":
 			envVars["SSH_PORT"] = input.Value()
+		case "Enter VPS IPv4":
+			envVars["VPS_IP"] = input.Value()
 		}
 	}
 
+	caddyPassword := randomString(passwordLength)
+	hash, err := bcrypt.GenerateFromPassword([]byte(caddyPassword), bcrypt.DefaultCost)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	envVars["CADDY_USER_NAME"] = envVars["USER_NAME"]
+	envVars["CADDY_PASSWORD"] = string(hash)
+
 	for key, value := range envVars {
-		slog.Info("key value", "key", key, "value", value)
 		os.Setenv(key, value)
 	}
 
@@ -235,7 +283,6 @@ func main() {
 	}
 	defer os.Remove(tempScriptPath)
 
-	ctx := context.Background()
 	cmd := exec.CommandContext(ctx, "/bin/bash", tempScriptPath)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -244,5 +291,57 @@ func main() {
 
 	if err := cmd.Run(); err != nil {
 		log.Fatal("Installation failed:", err)
+	}
+
+	client := cloudflare.NewClient(
+		option.WithAPIToken(
+			envVars["CF_API_KEY"],
+		),
+	)
+
+	res, err := client.Zones.List(ctx, zones.ZoneListParams{
+		Name: cloudflare.F(rootDomain),
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	var zoneID string
+	for _, z := range res.Result {
+		if z.Name == rootDomain {
+			zoneID = z.ID
+		}
+	}
+
+	for _, domain := range domains {
+		slog.Info("setting up dns records", "record", domain)
+
+		_, err := client.DNS.Records.New(ctx, dns.RecordNewParams{
+			ZoneID: cloudflare.F(zoneID),
+			Body: dns.ARecordParam{
+				Name:    cloudflare.F(domain),
+				TTL:     cloudflare.F(dns.TTL1),
+				Type:    cloudflare.F(dns.ARecordTypeA),
+				Comment: cloudflare.F("added by mithlond - do not remove"),
+				Content: cloudflare.F(envVars["VPS_IP"]),
+				Proxied: cloudflare.F(true),
+			},
+		})
+		if err != nil {
+			panic(err)
+		}
+	}
+
+	slog.Info(
+		"vps is now configured. save the following",
+		"caddy_username",
+		envVars["CADDY_USER_NAME"],
+		"caddy_password",
+		caddyPassword,
+	)
+
+	rebootCmd := exec.Command("sudo", "reboot")
+	if err := rebootCmd.Run(); err != nil {
+		fmt.Println("Error:", err)
 	}
 }
