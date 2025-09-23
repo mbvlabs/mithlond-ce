@@ -815,7 +815,7 @@ log "Downloading Mithlond binary version ${LATEST_RELEASE}..."
 curl -fsSL "https://github.com/mbvlabs/mithlond-ce/releases/download/${LATEST_RELEASE}/mithlond-linux-amd64" -o "$INSTALL_DIR/mithlond-linux-amd64"
 
 # cp "$TEMP_DIR/mithlond-linux-amd64" "$INSTALL_DIR/mithlond"
-chmod +x "$INSTALL_DIR/mithlond"
+chmod +x "$INSTALL_DIR/mithlond-linux-amd64"
 
 touch "$INSTALL_DIR/mithlond_prod.db"
 
@@ -879,7 +879,7 @@ Type=simple
 User=$USER_NAME
 Group=$USER_NAME
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/mithlond
+ExecStart=$INSTALL_DIR/mithlond-linux-amd64
 Restart=always
 RestartSec=10
 EnvironmentFile=$CONFIG_DIR/mithlond.env
