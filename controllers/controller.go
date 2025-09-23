@@ -2,9 +2,9 @@ package controllers
 
 import (
 	"context"
-	"net/http"
 	"github.com/mbvlabs/mithlond-ce/database"
 	"github.com/mbvlabs/mithlond-ce/router/cookies"
+	"net/http"
 
 	"github.com/a-h/templ"
 	"github.com/labstack/echo/v4"
@@ -16,6 +16,7 @@ type Controllers struct {
 	API    API
 	Pages  Pages
 }
+
 func New(
 	db database.SQLite,
 ) (Controllers, error) {
