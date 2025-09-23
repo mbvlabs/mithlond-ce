@@ -238,7 +238,7 @@ func main() {
 		// case "Enter Cloudflare email":
 		// 	envvars["CF_EMAIL"] = input.Value()
 		case "Enter Cloudflare API key":
-			envVars["CF_API_KEY"] = input.Value()
+			envVars["CLOUDFLARE_API_KEY"] = input.Value()
 		// case "Enter AWS Access Key ID":
 		// 	envvars["AWS_ACCESS_KEY_ID"] = input.Value()
 		// case "Enter AWS Secret Access Key":
@@ -307,7 +307,7 @@ func main() {
 
 	client := cloudflare.NewClient(
 		option.WithAPIToken(
-			envVars["CF_API_KEY"],
+			envVars["CLOUDFLARE_API_KEY"],
 		),
 	)
 
