@@ -2,9 +2,11 @@ package controllers
 
 import (
 	"context"
+	"net/http"
+
 	"github.com/mbvlabs/mithlond-ce/database"
 	"github.com/mbvlabs/mithlond-ce/router/cookies"
-	"net/http"
+	"github.com/starfederation/datastar-go/datastar"
 
 	"github.com/a-h/templ"
 	"github.com/labstack/echo/v4"
@@ -64,4 +66,8 @@ func render(ctx echo.Context, t templ.Component) error {
 	}
 
 	return ctx.HTML(http.StatusOK, buf.String())
+}
+
+func getSSE(c echo.Context) *datastar.ServerSentEventGenerator {
+	return datastar.NewSSE(c.Response(), c.Request())
 }

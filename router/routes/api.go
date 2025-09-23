@@ -9,6 +9,7 @@ const (
 
 var apiRoutes = []Route{
 	Health,
+	UpdateApp,
 }
 
 var Health = Route{
@@ -17,4 +18,12 @@ var Health = Route{
 	Method:       http.MethodGet,
 	Handler:      "API",
 	HandleMethod: "Health",
+}
+
+var UpdateApp = Route{
+	Name:         apiNamePrefix + ".update_app",
+	Path:         APIRoutePrefix + "/update-app",
+	Method:       http.MethodGet,
+	Handler:      "Pages",
+	HandleMethod: "UpdateApp",
 }

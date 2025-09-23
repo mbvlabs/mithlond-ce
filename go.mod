@@ -33,6 +33,8 @@ require (
 	gopkg.in/yaml.v2 v2.4.0
 )
 
+require github.com/CAFxX/httpcompression v0.0.9 // indirect
+
 require (
 	cel.dev/expr v0.24.0 // indirect
 	dario.cat/mergo v1.0.2 // indirect
@@ -128,6 +130,7 @@ require (
 	github.com/spf13/cobra v1.9.1 // indirect
 	github.com/spf13/pflag v1.0.7 // indirect
 	github.com/sqlc-dev/sqlc v1.30.0 // indirect
+	github.com/starfederation/datastar-go v1.0.2
 	github.com/stoewer/go-strcase v1.2.0 // indirect
 	github.com/tdewolff/parse/v2 v2.8.3 // indirect
 	github.com/tetratelabs/wazero v1.9.0 // indirect

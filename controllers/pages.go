@@ -1,6 +1,9 @@
 package controllers
 
 import (
+	"log/slog"
+	"net"
+
 	"github.com/mbvlabs/mithlond-ce/database"
 
 	"github.com/mbvlabs/mithlond-ce/views"
@@ -28,4 +31,24 @@ func (p Pages) Home(c echo.Context) error {
 
 func (p Pages) NotFound(c echo.Context) error {
 	return render(c, views.NotFound())
+}
+
+func (p Pages) UpdateApp(c echo.Context) error {
+	conn, err := net.Dial("unix", "/run/mithlond-update.sock")
+	slog.ErrorContext(c.Request().Context(), "error dialing conn", "err", err)
+	if err != nil {
+		return err
+	}
+
+	if _, err := conn.Write([]byte("update")); err != nil {
+		slog.ErrorContext(c.Request().Context(), "error writing to conn", "err", err)
+		return err
+	}
+
+	if err := conn.Close(); err != nil {
+		slog.ErrorContext(c.Request().Context(), "error closing conn", "err", err)
+		return err
+	}
+
+	return nil
 }

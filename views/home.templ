@@ -1,8 +1,17 @@
 package views
 
+import "fmt"
+import "github.com/mbvlabs/mithlond-ce/router/routes"
+
 templ Home() {
 	@base() {
-		<h1>Welcome to mithlond</h1>
-		<p>i'm still building out the dashboard-it's coming soon!</p>
+		<main class="container mx-auto flex flex-col justify-center items-center flex-1">
+			<h1 class="text-2xl font-bold mb-4">Welcome to mithlond</h1>
+			<p class="text-lg mb-10">i'm still building out the dashboard-it's coming soon!</p>
+			<button
+				data-on-click={ fmt.Sprintf("@get('%v')", routes.UpdateApp.Path) }
+				class="bg-red-600 font-bold hover:bg-red-800 px-6 py-4 rounded text-xl"
+			>Update</button>
+		</main>
 	}
 }
