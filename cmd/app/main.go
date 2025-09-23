@@ -57,6 +57,7 @@ func startServer(ctx context.Context, srv *http.Server, env string) error {
 
 	return srv.ListenAndServe()
 }
+
 func setupControllers(sqlite database.SQLite) (controllers.Controllers, error) {
 	ctrl, err := controllers.New(
 		sqlite,

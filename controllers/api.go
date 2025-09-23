@@ -10,6 +10,7 @@ import (
 type API struct {
 	db database.SQLite
 }
+
 func newAPI(db database.SQLite) API {
 	return API{db}
 }

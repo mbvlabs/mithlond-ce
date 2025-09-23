@@ -1,4 +1,3 @@
-
 package database
 
 import (

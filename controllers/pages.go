@@ -14,6 +14,7 @@ type Pages struct {
 	db    database.SQLite
 	cache otter.CacheWithVariableTTL[string, templ.Component]
 }
+
 func newPages(
 	db database.SQLite,
 	cache otter.CacheWithVariableTTL[string, templ.Component],
