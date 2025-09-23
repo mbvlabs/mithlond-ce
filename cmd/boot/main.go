@@ -262,7 +262,12 @@ func main() {
 		}
 	}
 
-	envVars["LATEST_RELEASE"] = releaseVersion
+	if releaseVersion != "" {
+		envVars["LATEST_RELEASE"] = releaseVersion
+	}
+	if releaseVersion == "" {
+		envVars["LATEST_RELEASE"] = "latest"
+	}
 
 	caddyPassword := randomString(passwordLength)
 	hash, err := bcrypt.GenerateFromPassword([]byte(caddyPassword), bcrypt.DefaultCost)

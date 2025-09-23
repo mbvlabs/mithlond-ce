@@ -808,7 +808,7 @@ systemctl enable caddy
 
 log "Starting mithlond app setup..."
 
-# log "Downloading Mithlond binary version $LATEST_RELEASE..."
+log "Downloading Mithlond binary version ${LATEST_RELEASE}..."
 curl -fsSL "https://github.com/mbvlabs/mithlond-ce/releases/download/${LATEST_RELEASE}/mithlond-linux-amd64" -o mithlond-linux-amd64
 
 mkdir -p "$INSTALL_DIR"
