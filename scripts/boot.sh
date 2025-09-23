@@ -63,9 +63,6 @@ usermod -aG sudo "$USER_NAME"
 
 echo "$USER_NAME:$USER_PASSWORD" | chpasswd
 
-# echo "$USER_NAME ALL=(ALL) ALL" > "/etc/sudoers.d/$USER_NAME"
-# chmod 440 "/etc/sudoers.d/$USER_NAME"
-
 if [ -f "/root/.ssh/authorized_keys" ]; then
     log "Copying root's SSH keys to $USER_NAME..."
     mkdir -p "/home/$USER_NAME/.ssh"
@@ -820,7 +817,7 @@ DB_PATH=$INSTALL_DIR/mithlond_prod.db
 PASSWORD_SALT=$PASSWORD_SALT
 
 PROJECT_NAME=mithlond
-APP_DOMAIN=mithlond.$ROOT_DOMAIN
+APP_DOMAIN=$MITHLOND_DOMAIN_NAME
 APP_PROTOCOL=https
 
 SESSION_KEY=$SESSION_KEY
@@ -835,6 +832,8 @@ CLOUDFLARE_APIKEY=$CLOUDFLARE_API_KEY
 
 TELEMETRY_SERVICE_NAME=mithlond
 TELEMETRY_OTLP_ENDPOINT=http://localhost:4317
+
+UPDATE_FAILED=false
 EOF
 
 chown "$USER_NAME:$USER_NAME" "$CONFIG_DIR/mithlond.env"
@@ -865,7 +864,7 @@ ReadWritePaths=$INSTALL_DIR /etc/prometheus
 WantedBy=multi-user.target
 EOF
 
-cat > /etc/systemd/system/mithlond.service << EOF
+cat > /etc/systemd/system/mithlond-update.service << EOF
 # Create a simple update service that runs as root
 [Unit]
 Description=Mithlond Update Service
@@ -890,19 +889,6 @@ BINARY_PATH="$BINARY_PATH"
 BACKUP_PATH="\${BINARY_PATH}.backup"
 TEMP_BINARY="/tmp/mithlond-linux-amd64"
 
-# Function to rollback on failure
-rollback() {
-    echo "Something went wrong! Rolling back..."
-    sudo systemctl stop "\$SERVICE_NAME" 2>/dev/null || true
-    sudo mv "\$BACKUP_PATH" "\$BINARY_PATH" 2>/dev/null || true
-    sudo systemctl start "\$SERVICE_NAME"
-    echo "Rollback completed"
-    exit 1
-}
-
-# Set trap to call rollback on any error
-trap rollback ERR
-
 echo "Starting \$SERVICE_NAME update..."
 wget -O "\$TEMP_BINARY" https://github.com/mbvlabs/mithlond-ce/releases/latest/download/mithlond-linux-amd64
 chmod +x "\$TEMP_BINARY"
@@ -911,22 +897,40 @@ sudo systemctl stop "\$SERVICE_NAME"
 sudo mv "\$TEMP_BINARY" "\$BINARY_PATH"
 sudo systemctl start "\$SERVICE_NAME"
 
+ENV_FILE="/etc/mithlond/mithlond.env"
+
+set_update_status() {
+    local status="$1"
+    if grep -q "^UPDATE_FAILED=" "$ENV_FILE" 2>/dev/null; then
+        sudo sed -i "s/^UPDATE_FAILED=.*/UPDATE_FAILED=${status}/" "$ENV_FILE"
+    else
+        echo "UPDATE_FAILED=${status}" | sudo tee -a "$ENV_FILE" > /dev/null
+    fi
+}
+
 # Wait a moment for service to fully start
 sleep 2
 
-# Verify service is running properly
-if sudo systemctl is-active --quiet "\$SERVICE_NAME"; then
-    echo "Update successful! Service is running."
-    echo "Cleaning up backup..."
-    sudo rm "\$BACKUP_PATH"
-    echo "Update completed successfully"
-else
-    echo "Service is not active, triggering rollback..."
-    false  # This will trigger the trap
-fi
+SERVICE_STATUS=$(sudo systemctl is-active "$SERVICE_NAME")
 
-# Clear the trap since we succeeded
-trap - ERR
+# Verify service is running properly
+# if sudo systemctl is-failed --quiet "$SERVICE_NAME"; then
+if [[ "$SERVICE_STATUS" == "active" ]]; then
+    echo "Update successful! Service is running."
+	set_update_status "false"
+    echo "Cleaning up backup..."
+    sudo rm "$BACKUP_PATH"
+    echo "Update completed successfully"
+    exit 0
+else
+    echo "Something went wrong! Rolling back..."
+	set_update_status "true"
+    sudo systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+    sudo mv "$BACKUP_PATH" "$BINARY_PATH" 2>/dev/null || true
+    sudo systemctl start "$SERVICE_NAME"
+    echo "Rollback completed"
+    exit 0
+fi
 EOF
 
 chown "$USER_NAME:$USER_NAME" "$INSTALL_DIR/update-app.sh"

@@ -32,10 +32,9 @@ func (p Pages) NotFound(c echo.Context) error {
 	return render(c, views.NotFound())
 }
 
+// TODO send toast with result
 func (p Pages) UpdateApp(c echo.Context) error {
-	// Schedule update to run in 5 seconds, completely detached
-	cmd := exec.CommandContext(
-		c.Request().Context(),
+	cmd := exec.Command(
 		"sudo",
 		"/usr/bin/systemctl",
 		"start",
@@ -46,15 +45,6 @@ func (p Pages) UpdateApp(c echo.Context) error {
 		return c.JSON(500, map[string]string{"error": "Failed to schedule update " + err.Error()})
 	}
 
-	// return c.JSON(200, map[string]string{"message": "Update scheduled successfully"})
-	// cmd := exec.CommandContext(c.Request().Context(), "sudo", "/opt/mithlond/update-app.sh")
-	// cmd.Stderr = os.Stderr
-	// if err := cmd.Run(); err != nil {
-	// 	return c.JSON(500, map[string]string{
-	// 		"message": "UPDATE NOT STARRTED",
-	// 	})
-	// }
-	//
 	return c.JSON(200, map[string]string{
 		"message": "Update started successfully",
 	})
