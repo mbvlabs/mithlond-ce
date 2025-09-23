@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"log/slog"
@@ -37,6 +38,14 @@ func randomString(length int) string {
 		result[i] = charset[idx.Int64()]
 	}
 	return string(result)
+}
+
+func generateRandomHex(length int) (string, error) {
+	bytes := make([]byte, length)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(bytes), nil
 }
 
 var (
@@ -268,7 +277,33 @@ func main() {
 	if releaseVersion == "" {
 		envVars["LATEST_RELEASE"] = "latest"
 	}
+
 	envVars["ROOT_DOMAIN"] = rootDomain
+
+	sessionKey, err := generateRandomHex(32)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	sessionEncryptionKey, err := generateRandomHex(32)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	tokenSigningKey, err := generateRandomHex(32)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	passwordSalt, err := generateRandomHex(16)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	envVars["SESSION_KEY"] = sessionKey
+	envVars["SESSION_ENCRYPTION_KEY"] = sessionEncryptionKey
+	envVars["TOKEN_SIGNING_KEY"] = tokenSigningKey
+	envVars["PASSWORD_SALT"] = passwordSalt
 
 	caddyPassword := randomString(passwordLength)
 	hash, err := bcrypt.GenerateFromPassword([]byte(caddyPassword), bcrypt.DefaultCost)

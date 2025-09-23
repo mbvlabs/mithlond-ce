@@ -823,12 +823,6 @@ chown -R "$USER_NAME:$USER_NAME" "$INSTALL_DIR"
 chmod 755 "$INSTALL_DIR"
 chmod 644 "$INSTALL_DIR/mithlond_prod.db"
 
-log "Generating security keys..."
-SESSION_KEY=$(openssl rand -hex 32)
-SESSION_ENCRYPTION_KEY=$(openssl rand -hex 32)
-TOKEN_SIGNING_KEY=$(openssl rand -hex 32)
-PASSWORD_SALT=$(openssl rand -hex 16)
-
 # export SESSION_KEY SESSION_ENCRYPTION_KEY TOKEN_SIGNING_KEY PASSWORD_SALT
 
 log "Initializing database..."
