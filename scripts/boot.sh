@@ -906,7 +906,7 @@ rollback() {
 trap rollback ERR
 
 echo "Starting \$SERVICE_NAME update..."
-wget -O "\$TEMP_BINARY" https://github.com/mbvlabs/mithlond/releases/latest/download/mithlond-linux-amd64
+wget -O "\$TEMP_BINARY" https://github.com/mbvlabs/mithlond-ce/releases/latest/download/mithlond-linux-amd64
 chmod +x "\$TEMP_BINARY"
 sudo cp "\$BINARY_PATH" "\$BACKUP_PATH"
 sudo systemctl stop "\$SERVICE_NAME"
@@ -919,7 +919,6 @@ sleep 2
 # Verify service is running properly
 if sudo systemctl is-active --quiet "\$SERVICE_NAME"; then
     echo "Update successful! Service is running."
-    sudo systemctl status "\$SERVICE_NAME"
     echo "Cleaning up backup..."
     sudo rm "\$BACKUP_PATH"
     echo "Update completed successfully"
@@ -943,12 +942,13 @@ After=network.target
 
 [Service]
 Type=oneshot
-User=$USER_NAME
+User=root
 WorkingDirectory=$INSTALL_DIR
 ExecStart=$INSTALL_DIR/update-app.sh
 StandardOutput=journal
 StandardError=journal
 StandardInput=socket
+StartLimitBurst=10
 EOF
 
 log "Reloading systemd daemon, enabling, and starting mithlond service..."
