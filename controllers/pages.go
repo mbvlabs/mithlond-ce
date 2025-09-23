@@ -1,8 +1,7 @@
 package controllers
 
 import (
-	"log/slog"
-	"net"
+	"os/exec"
 
 	"github.com/mbvlabs/mithlond-ce/database"
 
@@ -34,21 +33,14 @@ func (p Pages) NotFound(c echo.Context) error {
 }
 
 func (p Pages) UpdateApp(c echo.Context) error {
-	conn, err := net.Dial("unix", "/run/mithlond-update.sock")
-	slog.ErrorContext(c.Request().Context(), "error dialing conn", "err", err)
-	if err != nil {
-		return err
-	}
+	response := c.JSON(200, map[string]string{
+		"message": "Update started successfully",
+	})
 
-	if _, err := conn.Write([]byte("update")); err != nil {
-		slog.ErrorContext(c.Request().Context(), "error writing to conn", "err", err)
-		return err
-	}
+	go func() {
+		cmd := exec.Command("sudo", "/opt/mithlond/update-app.sh")
+		cmd.Start()
+	}()
 
-	if err := conn.Close(); err != nil {
-		slog.ErrorContext(c.Request().Context(), "error closing conn", "err", err)
-		return err
-	}
-
-	return nil
+	return response
 }
