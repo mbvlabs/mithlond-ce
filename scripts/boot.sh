@@ -4,9 +4,9 @@ set -euo pipefail
 # ========================================
 # SOFTWARE VERSION VARIABLES
 # ========================================
-PROMETHEUS_VERSION="3.5.5"
-NODE_EXPORTER_VERSION="1.9.0"
-ALLOY_VERSION="1.11.0"
+PROMETHEUS_VERSION="3.6.0"
+NODE_EXPORTER_VERSION="1.9.1"
+ALLOY_VERSION="1.10.2"
 LOKI_VERSION="3.5.5"
 TEMPO_VERSION="2.8.2"
 
