@@ -1,6 +1,18 @@
 #!/bin/bash
 set -euo pipefail
 
+# ========================================
+# SOFTWARE VERSION VARIABLES
+# ========================================
+PROMETHEUS_VERSION="3.5.5"
+NODE_EXPORTER_VERSION="1.9.0"
+ALLOY_VERSION="1.11.0"
+LOKI_VERSION="3.5.5"
+TEMPO_VERSION="2.8.2"
+
+# ========================================
+# INSTALLATION CONFIGURATION
+# ========================================
 LOG_FILE="/var/log/mithlond-install.log"
 
 INSTALL_DIR="/opt/mithlond"
@@ -8,7 +20,6 @@ CONFIG_DIR="/etc/mithlond"
 
 TEMP_DIR="/tmp/mithlond-install"
 
-PROMETHEUS_VERSION="${PROMETHEUS_VERSION:-latest}"
 PROMETHEUS_USER="prometheus"
 PROMETHEUS_GROUP="prometheus"
 PROMETHEUS_HOME="/var/lib/prometheus"
@@ -17,7 +28,6 @@ PROMETHEUS_BIN_DIR="/usr/local/bin"
 PROMETHEUS_SERVICE_FILE="/etc/systemd/system/prometheus.service"
 CONFIG_WRITER_USER="${USER_NAME:-}"
 
-NODE_EXPORTER_VERSION="${NODE_EXPORTER_VERSION:-latest}"
 NODE_EXPORTER_USER="node_exporter"
 NODE_EXPORTER_GROUP="node_exporter"
 NODE_EXPORTER_BIN_DIR="/usr/local/bin"
@@ -51,7 +61,6 @@ fi
 log "Updating system user..."
 usermod -aG sudo "$USER_NAME"
 
-echo "Admin Password: $USER_PASSWORD"
 echo "$USER_NAME:$USER_PASSWORD" | chpasswd
 
 echo "$USER_NAME ALL=(ALL) ALL" > "/etc/sudoers.d/$USER_NAME"
@@ -69,7 +78,7 @@ else
     log "No SSH keys found in /root/.ssh/authorized_keys - user will use password authentication"
 fi
 
-log "Updating system user..."
+log "Installing packages..."
 apt-get -y install curl ca-certificates gnupg debian-keyring debian-archive-keyring apt-transport-https net-tools unzip
 
 cat > /etc/ssh/sshd_config << EOF
@@ -147,12 +156,6 @@ echo "Fail2Ban setup complete!"
 
 log "Setting up node exporter..."
 
-if [[ "$NODE_EXPORTER_VERSION" == "latest" ]]; then
-    log "Fetching latest Node Exporter version..."
-    NODE_EXPORTER_VERSION=$(curl -s https://api.github.com/repos/prometheus/node_exporter/releases/latest | grep '"tag_name":' | cut -d'"' -f4 | sed 's/^v//')
-    log "Latest version: $NODE_EXPORTER_VERSION"
-fi
-
 log "Creating node_exporter user and group..."
 if ! getent group $NODE_EXPORTER_GROUP >/dev/null 2>&1; then
     groupadd --system $NODE_EXPORTER_GROUP
@@ -217,8 +220,6 @@ cd ~
 # 4. alloy
 log "Setting up alloy..."
 
-ALLOY_VERSION=${ALLOY_VERSION:-"1.9.1"} # Default Alloy version
-
 log "Starting Grafana Alloy installation script..."
 
 log "Creating alloy group and user..."
@@ -262,8 +263,8 @@ fi
 
 log "Extracting and installing Alloy..."
 unzip -q alloy-linux-amd64.zip
-sudo mv alloy-linux-amd64 /usr/local/bin/alloy
-sudo chmod +x /usr/local/bin/alloy # Make the binary executable
+mv alloy-linux-amd64 /usr/local/bin/alloy
+chmod +x /usr/local/bin/alloy
 rm -f alloy-linux-amd64.zip
 
 log "Creating Alloy configuration file at /etc/alloy/config.alloy..."
@@ -309,8 +310,8 @@ otelcol.exporter.otlp "tempo" {
 }
 EOF
 
-sudo chown alloy:alloy /etc/alloy/config.alloy
-sudo chmod 644 /etc/alloy/config.alloy
+chown alloy:alloy /etc/alloy/config.alloy
+chmod 644 /etc/alloy/config.alloy
 
 log "Creating Alloy systemd service file at /etc/systemd/system/alloy.service..."
 cat > /etc/systemd/system/alloy.service << EOF
@@ -339,16 +340,12 @@ WantedBy=multi-user.target
 EOF
 
 log "Reloading systemd daemon, enabling, and starting Alloy service..."
-sudo systemctl daemon-reload
-sudo systemctl enable alloy
+systemctl daemon-reload
+systemctl enable alloy
 
 log "Finished Grafana Alloy installation at $(date)."
 
 cd ~
-
-log "Starting Loki installation..."
-
-LOKI_VERSION=${LOKI_VERSION:-"3.4.1"}
 
 log "Installing Loki version $LOKI_VERSION..."
 
@@ -464,9 +461,6 @@ log "Finished Loki installation at $(date)."
 
 log "Installing Grafana Tempo..."
 
-# Set default version if not specified
-TEMPO_VERSION=${TEMPO_VERSION:-"2.6.1"}
-
 log "Creating tempo user..."
 useradd --system --shell /bin/false --home-dir /var/lib/tempo tempo || log "User tempo already exists"
 
@@ -493,7 +487,6 @@ mv tempo /usr/local/bin/tempo
 chmod +x /usr/local/bin/tempo
 rm -f tempo_${TEMPO_VERSION}_linux_amd64.tar.gz
 
-# Create Tempo configuration
 log "Creating Tempo configuration..."
 cat > /etc/tempo/tempo.yml << EOF
 server:
@@ -548,7 +541,6 @@ EOF
 
 chown tempo:tempo /etc/tempo/tempo.yml
 
-# Create systemd service
 log "Creating Tempo systemd service..."
 cat > /etc/systemd/system/tempo.service << EOF
 [Unit]
@@ -584,12 +576,6 @@ log "Starting Prometheus installation..."
 
 if [[ $EUID -ne 0 ]]; then
     error "This script must be run as root"
-fi
-
-if [[ "$PROMETHEUS_VERSION" == "latest" ]]; then
-    log "Fetching latest Prometheus version..."
-    PROMETHEUS_VERSION=$(curl -s https://api.github.com/repos/prometheus/prometheus/releases/latest | grep '"tag_name":' | cut -d'"' -f4 | sed 's/^v//')
-    log "Latest version: $PROMETHEUS_VERSION"
 fi
 
 log "Creating prometheus user and group..."
@@ -754,10 +740,6 @@ log "Configuring Caddy for telemetry services..."
 cat > /etc/caddy/Caddyfile << EOF
 # Mithlond application reverse proxy configuration
 ${MITHLOND_DOMAIN_NAME:-your-domain.com} {
-	basic_auth {
-		${CADDY_USER_NAME} ${CADDY_PASSWORD}
-    }
-
     reverse_proxy localhost:8080
 }
 
@@ -814,7 +796,6 @@ mkdir -p "$CONFIG_DIR"
 log "Downloading Mithlond binary version ${LATEST_RELEASE}..."
 curl -fsSL "https://github.com/mbvlabs/mithlond-ce/releases/download/${LATEST_RELEASE}/mithlond-linux-amd64" -o "$INSTALL_DIR/mithlond-linux-amd64"
 
-# cp "$TEMP_DIR/mithlond-linux-amd64" "$INSTALL_DIR/mithlond"
 chmod +x "$INSTALL_DIR/mithlond-linux-amd64"
 
 touch "$INSTALL_DIR/mithlond_prod.db"
@@ -823,12 +804,7 @@ chown -R "$USER_NAME:$USER_NAME" "$INSTALL_DIR"
 chmod 755 "$INSTALL_DIR"
 chmod 644 "$INSTALL_DIR/mithlond_prod.db"
 
-# export SESSION_KEY SESSION_ENCRYPTION_KEY TOKEN_SIGNING_KEY PASSWORD_SALT
-
-log "Initializing database..."
-# sudo -u "$USER_NAME" env PASSWORD_SALT="$PASSWORD_SALT" "$TEMP_DIR/mithlond-boot-linux-amd64"
-
-# log "Creating environment configuration..."
+log "Creating environment configuration..."
 cat > "$CONFIG_DIR/mithlond.env" << EOF
 ENVIRONMENT=production
 
@@ -921,32 +897,9 @@ EOF
 
 log "Reloading systemd daemon, enabling, and starting mithlond service..."
 
-sudo systemctl enable mithlond
-sudo systemctl enable mithlond-update.socket
-sudo systemctl start mithlond-update.socket
-
-if [[ -f /etc/systemd/system/mithlond.service ]]; then
-    log "Service file created successfully"
-    log "File size: $(stat -c%s /etc/systemd/system/mithlond.service) bytes"
-    log "File permissions: $(stat -c%a /etc/systemd/system/mithlond.service)"
-    log "File owner: $(stat -c%U:%G /etc/systemd/system/mithlond.service)"
-else
-    error_exit "Failed to create service file"
-fi
-
-systemctl daemon-reload
-if [[ $? -eq 0 ]]; then
-    log "Systemd daemon reloaded successfully"
-else
-    error_exit "Failed to reload systemd daemon"
-fi
-
 systemctl enable mithlond
-if [[ $? -eq 0 ]]; then
-    log "Mithlond service enabled successfully"
-else
-    error_exit "Failed to enable mithlond service"
-fi
+systemctl enable mithlond-update.socket
+systemctl start mithlond-update.socket
 
 log "Installation process completed successfully!"
 
