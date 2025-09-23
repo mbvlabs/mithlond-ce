@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.25'
+    
+    - name: Get version
+      id: version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+    
+    - name: Build binary
+      run: |
+        CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o mithlond-linux-amd64 ./cmd/app
+    
+    - name: Build boot binary
+      run: |
+        CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o mithlond-boot-linux-amd64 ./cmd/boot
+    
+    - name: Generate checksums
+      run: |
+        sha256sum mithlond-linux-amd64 > checksums.txt
+        sha256sum mithlond-boot-linux-amd64 >> checksums.txt
+    
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          mithlond-linux-amd64
+          mithlond-boot-linux-amd64
+          checksums.txt
+        body: |
+          ## Installation
+          
+            Coming soon
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
