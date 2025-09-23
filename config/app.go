@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/caarlos0/env/v10"
 )
@@ -13,11 +14,12 @@ const (
 )
 
 type app struct {
-	ServerHost  string `env:"SERVER_HOST"`
-	ServerPort  string `env:"SERVER_PORT"`
-	Domain      string `env:"APP_DOMAIN"`
-	ProjectName string `env:"PROJECT_NAME"`
-	Env         string `env:"ENVIRONMENT"`
+	ServerHost   string `env:"SERVER_HOST"`
+	ServerPort   string `env:"SERVER_PORT"`
+	Domain       string `env:"APP_DOMAIN"`
+	ProjectName  string `env:"PROJECT_NAME"`
+	Env          string `env:"ENVIRONMENT"`
+	UpdateFailed bool
 }
 
 func (a app) GetFullDomain() string {
@@ -40,6 +42,13 @@ func newAppConfig() app {
 		RequiredIfNoDef: true,
 	}); err != nil {
 		panic(err)
+	}
+
+	switch os.Getenv("UPDATE_FAILED") {
+	case "true":
+		appCfg.UpdateFailed = true
+	case "false":
+		appCfg.UpdateFailed = false
 	}
 
 	return appCfg
