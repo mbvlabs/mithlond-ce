@@ -238,7 +238,6 @@ mkdir -p /etc/alloy
 mkdir -p /var/lib/alloy/data
 mkdir -p /var/log/alloy
 
-
 log "Setting ownership and permissions for alloy directories..."
 chown -R alloy:alloy /etc/alloy
 chown -R alloy:alloy /var/lib/alloy
@@ -879,6 +878,31 @@ SocketGroup=$USER_NAME
 WantedBy=sockets.target
 EOF
 
+cat > $INSTALL_DIR/update-app.sh << EOF
+#!/bin/bash
+set -e
+
+SERVICE_NAME="mithlond"
+BINARY_PATH="$INSTALL_DIR/mithlond-linux-amd64"
+DOWNLOAD_URL="https://github.com/mbvlabs/mithlond/releases/latest/download/mithlond-linux-amd64"
+
+wget -O /tmp/mithlond-linux-amd64 "$DOWNLOAD_URL"
+chmod +x /tmp/mithlond-linux-amd64
+
+sudo cp "$BINARY_PATH" "$BINARY_PATH.backup-$(date +%Y%m%d-%H%M%S)"
+
+sudo systemctl stop "$SERVICE_NAME"
+
+sudo mv /tmp/mithlond-linux-amd64 "$BINARY_PATH"
+
+sudo systemctl start "$SERVICE_NAME"
+
+sudo systemctl status "$SERVICE_NAME"
+EOF
+
+chown "$USER_NAME:$USER_NAME" "$INSTALL_DIR/update-app.sh"
+chmod 755 "$INSTALL_DIR/update-app.sh"
+
 log "Creating update service unit..."
 cat > /etc/systemd/system/mithlond-update.service << EOF
 [Unit]
@@ -887,7 +911,7 @@ After=network.target
 
 [Service]
 Type=oneshot
-User=root
+User=$USER_NAME
 WorkingDirectory=$INSTALL_DIR
 ExecStart=$INSTALL_DIR/update-app.sh
 StandardOutput=journal
