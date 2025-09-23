@@ -878,26 +878,58 @@ SocketGroup=$USER_NAME
 WantedBy=sockets.target
 EOF
 
+SERVICE_NAME="mithlond"
+BINARY_PATH="$INSTALL_DIR/mithlond-linux-amd64"
+
 cat > $INSTALL_DIR/update-app.sh << EOF
 #!/bin/bash
 set -e
 
-SERVICE_NAME="mithlond"
-BINARY_PATH="$INSTALL_DIR/mithlond-linux-amd64"
-DOWNLOAD_URL="https://github.com/mbvlabs/mithlond/releases/latest/download/mithlond-linux-amd64"
+# Configuration
+INSTALL_DIR="$INSTALL_DIR"
+SERVICE_NAME="$SERVICE_NAME"
+BINARY_PATH="$BINARY_PATH"
+BACKUP_PATH="\${BINARY_PATH}.backup"
+TEMP_BINARY="/tmp/mithlond-linux-amd64"
 
-wget -O /tmp/mithlond-linux-amd64 "$DOWNLOAD_URL"
-chmod +x /tmp/mithlond-linux-amd64
+# Function to rollback on failure
+rollback() {
+    echo "Something went wrong! Rolling back..."
+    sudo systemctl stop "\$SERVICE_NAME" 2>/dev/null || true
+    sudo mv "\$BACKUP_PATH" "\$BINARY_PATH" 2>/dev/null || true
+    sudo systemctl start "\$SERVICE_NAME"
+    echo "Rollback completed"
+    exit 1
+}
 
-sudo cp "$BINARY_PATH" "$BINARY_PATH.backup-$(date +%Y%m%d-%H%M%S)"
+# Set trap to call rollback on any error
+trap rollback ERR
 
-sudo systemctl stop "$SERVICE_NAME"
+echo "Starting \$SERVICE_NAME update..."
+wget -O "\$TEMP_BINARY" https://github.com/mbvlabs/mithlond/releases/latest/download/mithlond-linux-amd64
+chmod +x "\$TEMP_BINARY"
+sudo cp "\$BINARY_PATH" "\$BACKUP_PATH"
+sudo systemctl stop "\$SERVICE_NAME"
+sudo mv "\$TEMP_BINARY" "\$BINARY_PATH"
+sudo systemctl start "\$SERVICE_NAME"
 
-sudo mv /tmp/mithlond-linux-amd64 "$BINARY_PATH"
+# Wait a moment for service to fully start
+sleep 2
 
-sudo systemctl start "$SERVICE_NAME"
+# Verify service is running properly
+if sudo systemctl is-active --quiet "\$SERVICE_NAME"; then
+    echo "Update successful! Service is running."
+    sudo systemctl status "\$SERVICE_NAME"
+    echo "Cleaning up backup..."
+    sudo rm "\$BACKUP_PATH"
+    echo "Update completed successfully"
+else
+    echo "Service is not active, triggering rollback..."
+    false  # This will trigger the trap
+fi
 
-sudo systemctl status "$SERVICE_NAME"
+# Clear the trap since we succeeded
+trap - ERR
 EOF
 
 chown "$USER_NAME:$USER_NAME" "$INSTALL_DIR/update-app.sh"
