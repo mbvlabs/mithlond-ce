@@ -863,21 +863,6 @@ ReadWritePaths=$INSTALL_DIR /etc/prometheus
 WantedBy=multi-user.target
 EOF
 
-log "Creating update socket unit..."
-cat > /etc/systemd/system/mithlond-update.socket << EOF
-[Unit]
-Description=Mithlond Update Socket
-
-[Socket]
-ListenStream=/run/mithlond-update.sock
-SocketMode=0660
-SocketUser=$USER_NAME
-SocketGroup=$USER_NAME
-
-[Install]
-WantedBy=sockets.target
-EOF
-
 SERVICE_NAME="mithlond"
 BINARY_PATH="$INSTALL_DIR/mithlond-linux-amd64"
 
@@ -934,28 +919,17 @@ EOF
 chown "$USER_NAME:$USER_NAME" "$INSTALL_DIR/update-app.sh"
 chmod 755 "$INSTALL_DIR/update-app.sh"
 
-log "Creating update service unit..."
-cat > /etc/systemd/system/mithlond-update.service << EOF
-[Unit]
-Description=Mithlond Application Update
-After=network.target
+log "Configuring passwordless sudo for update script..."
 
-[Service]
-Type=oneshot
-User=root
-WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/update-app.sh
-StandardOutput=journal
-StandardError=journal
-StandardInput=socket
-StartLimitBurst=10
+cat > "/etc/sudoers.d/$USER_NAME-update" << EOF
+# Allow $USER_NAME to run the update script without password
+$USER_NAME ALL=(root) NOPASSWD: $INSTALL_DIR/update-app.sh
 EOF
+chmod 440 "/etc/sudoers.d/$USER_NAME-update"
 
 log "Reloading systemd daemon, enabling, and starting mithlond service..."
 
 systemctl enable mithlond
-systemctl enable mithlond-update.socket
-systemctl start mithlond-update.socket
 
 log "Installation process completed successfully!"
 
