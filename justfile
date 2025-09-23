@@ -71,7 +71,7 @@ live-templ:
 live-tailwind:
 	./bin/tailwindcli -i ./css/base.css -o ./assets/css/tw.css --watch
 
-# [parallel]
+[parallel]
 run: live-tailwind live-templ live-server 
 
 # code quality
