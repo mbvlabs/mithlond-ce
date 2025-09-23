@@ -787,6 +787,8 @@ chown caddy:caddy /var/log/caddy
 log "Enabling Caddy service (but not starting yet)..."
 systemctl enable caddy
 
+caddy fmt --overwrite /etc/caddy/Caddyfile
+
 log "Starting mithlond app setup..."
 
 mkdir -p "$INSTALL_DIR"
