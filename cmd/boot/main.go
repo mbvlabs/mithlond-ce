@@ -23,8 +23,12 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-const passwordLength = 8
+var releaseVersion string
+
+const (
+	charset        = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	passwordLength = 8
+)
 
 func randomString(length int) string {
 	result := make([]byte, length)
@@ -257,6 +261,8 @@ func main() {
 			envVars["VPS_IP"] = input.Value()
 		}
 	}
+
+	envVars["LATEST_RELEASE"] = releaseVersion
 
 	caddyPassword := randomString(passwordLength)
 	hash, err := bcrypt.GenerateFromPassword([]byte(caddyPassword), bcrypt.DefaultCost)
