@@ -57,7 +57,7 @@ func Home() templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "\" class=\"bg-red-600 font-bold hover:bg-red-800 px-6 py-4 rounded text-xl\">Update</button></main><p>I should show after update btn click</p>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "\" class=\"bg-red-600 font-bold hover:bg-red-800 px-6 py-4 rounded text-xl\">Update</button><p class=\"text-6xl text-purple-950 font-bold\">I SHOULD SHOW after update btn click</p><p class=\"text-6xl text-purple-950 font-bold\">ALSO ME</p><p class=\"text-6xl text-purple-950 font-bold\">AND ME</p></main>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}

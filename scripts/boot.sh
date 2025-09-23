@@ -63,8 +63,8 @@ usermod -aG sudo "$USER_NAME"
 
 echo "$USER_NAME:$USER_PASSWORD" | chpasswd
 
-echo "$USER_NAME ALL=(ALL) ALL" > "/etc/sudoers.d/$USER_NAME"
-chmod 440 "/etc/sudoers.d/$USER_NAME"
+# echo "$USER_NAME ALL=(ALL) ALL" > "/etc/sudoers.d/$USER_NAME"
+# chmod 440 "/etc/sudoers.d/$USER_NAME"
 
 if [ -f "/root/.ssh/authorized_keys" ]; then
     log "Copying root's SSH keys to $USER_NAME..."
@@ -865,6 +865,17 @@ ReadWritePaths=$INSTALL_DIR /etc/prometheus
 WantedBy=multi-user.target
 EOF
 
+cat > /etc/systemd/system/mithlond.service << EOF
+# Create a simple update service that runs as root
+[Unit]
+Description=Mithlond Update Service
+[Service]
+Type=oneshot
+RemainAfterExit=no
+User=root
+ExecStart=/opt/mithlond/update-app.sh
+EOF
+
 SERVICE_NAME="mithlond"
 BINARY_PATH="$INSTALL_DIR/mithlond-linux-amd64"
 
@@ -925,7 +936,7 @@ log "Configuring passwordless sudo for update script..."
 
 cat > "/etc/sudoers.d/$USER_NAME-update" << EOF
 # Allow $USER_NAME to run the update script without password
-$USER_NAME ALL=(root) NOPASSWD: $INSTALL_DIR/update-app.sh
+$USER_NAME ALL=(root) NOPASSWD: /usr/bin/systemctl start mithlond-update.service
 EOF
 chmod 440 "/etc/sudoers.d/$USER_NAME-update"
 

@@ -86,3 +86,6 @@ golines:
 
 move-boot:
 	go build -o boot cmd/boot/main.go  && scp -i ~/.ssh/test_key ./boot root@91.98.31.175:/root
+
+move-app:
+	go build -o mithlond-linux-amd64 cmd/app/main.go  && scp -i ~/.ssh/test_key ./mithlond-linux-amd64 mith-test-setup:/opt/mithlond/mithlond-linux-amd64
