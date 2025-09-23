@@ -45,7 +45,20 @@ jobs:
         body: |
           ## Installation
           
-            Coming soon
+            SSH into your vps as root and run:
+            ```bash
+            curl -L -o mithlond-boot-linux-amd64 https://github.com/mbvlabs/mithlond-ce/releases/download/${VERSION}/mithlond-boot-linux-amd64
+            ```
+
+            then make the binary executable:
+            ```bash
+            chmod +x mithlond-boot-linux-amd64
+            ```
+
+            finally, run the binary as root:
+            ```bash
+            sudo ./mithlond-boot-linux-amd64
+            ```
         draft: false
         prerelease: false
       env:
