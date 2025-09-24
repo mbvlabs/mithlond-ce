@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
@@ -11,11 +12,10 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
-	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/cloudflare/cloudflare-go/v6"
 	"github.com/cloudflare/cloudflare-go/v6/dns"
 	"github.com/cloudflare/cloudflare-go/v6/option"
@@ -48,137 +48,37 @@ func generateRandomHex(length int) (string, error) {
 	return hex.EncodeToString(bytes), nil
 }
 
-var (
-	focusedStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
-	blurredStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	cursorStyle         = focusedStyle
-	noStyle             = lipgloss.NewStyle()
-	helpStyle           = blurredStyle
-	cursorModeHelpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+func getPublicIP(version string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-	focusedButton = focusedStyle.Render("[ Submit ]")
-	blurredButton = fmt.Sprintf("[ %s ]", blurredStyle.Render("Submit"))
-
-	domainPrefix = map[string]string{
-		"MITHLOND_DOMAIN_NAME":  "test-mithlond",
-		"TEL_PROM_DOMAIN_NAME":  "test-telemetry-prometheus",
-		"TEL_LOKI_DOMAIN_NAME":  "test-telemetry-loki",
-		"TEL_TEMPO_DOMAIN_NAME": "test-telemetry-tempo",
-		"TEL_ALLOY_DOMAIN_NAME": "test-telemetry-alloy",
-	}
-)
-
-type model struct {
-	inputs     []textinput.Model
-	focusIndex int
-	cursorMode cursor.Mode
-}
-
-func (m model) Init() tea.Cmd {
-	return textinput.Blink
-}
-
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "ctrl+c", "esc":
-			return m, tea.Quit
-
-		// Change cursor mode
-		case "ctrl+r":
-			m.cursorMode++
-			if m.cursorMode > cursor.CursorHide {
-				m.cursorMode = cursor.CursorBlink
-			}
-			cmds := make([]tea.Cmd, len(m.inputs))
-			for i := range m.inputs {
-				cmds[i] = m.inputs[i].Cursor.SetMode(m.cursorMode)
-			}
-			return m, tea.Batch(cmds...)
-
-		case "tab", "shift+tab", "enter", "up", "down":
-			s := msg.String()
-
-			if s == "enter" && m.focusIndex == len(m.inputs) {
-				return m, tea.Quit
-			}
-
-			if s == "up" || s == "shift+tab" {
-				m.focusIndex--
-			} else {
-				m.focusIndex++
-			}
-
-			if m.focusIndex > len(m.inputs) {
-				m.focusIndex = 0
-			} else if m.focusIndex < 0 {
-				m.focusIndex = len(m.inputs)
-			}
-
-			cmds := make([]tea.Cmd, len(m.inputs))
-			for i := 0; i <= len(m.inputs)-1; i++ {
-				if i == m.focusIndex {
-					// Set focused state
-					cmds[i] = m.inputs[i].Focus()
-					m.inputs[i].PromptStyle = focusedStyle
-					m.inputs[i].TextStyle = focusedStyle
-					continue
-				}
-				// Remove focused state
-				m.inputs[i].Blur()
-				m.inputs[i].PromptStyle = noStyle
-				m.inputs[i].TextStyle = noStyle
-			}
-
-			return m, tea.Batch(cmds...)
-		}
+	cmd := exec.CommandContext(ctx, "curl", version, "-s", "ifconfig.me")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", errors.Join(err, errors.New("could not detect ip"))
 	}
 
-	cmd := m.updateInputs(msg)
+	ip := strings.TrimSpace(string(output))
 
-	return m, cmd
-}
-
-func (m *model) updateInputs(msg tea.Msg) tea.Cmd {
-	cmds := make([]tea.Cmd, len(m.inputs))
-
-	for i := range m.inputs {
-		m.inputs[i], cmds[i] = m.inputs[i].Update(msg)
-	}
-
-	return tea.Batch(cmds...)
-}
-
-func (m model) View() string {
-	var b strings.Builder
-
-	for i := range m.inputs {
-		fmt.Fprintf(&b, "\n%s \n%s", helpStyle.Render(m.inputs[i].Placeholder), m.inputs[i].View())
-		if i < len(m.inputs)-1 {
-			b.WriteRune('\n')
-		}
-	}
-
-	button := &blurredButton
-	if m.focusIndex == len(m.inputs) {
-		button = &focusedButton
-	}
-
-	fmt.Fprintf(&b, "\n\n%s\n\n", *button)
-
-	b.WriteString(helpStyle.Render("cursor mode is "))
-	b.WriteString(cursorModeHelpStyle.Render(m.cursorMode.String()))
-	b.WriteString(helpStyle.Render(" (ctrl+r to change style)"))
-
-	return b.String()
+	return ip, nil
 }
 
 func main() {
 	ctx := context.Background()
+	ipv4Detected, err := getPublicIP("-4")
+	if err != nil {
+		slog.WarnContext(ctx, "could not detect ipv4 defaulting to empty string", "error", err)
+	}
+	ipv6Detected, err := getPublicIP("-6")
+	if err != nil {
+		slog.WarnContext(ctx, "could not detect ipv6 defaulting to empty string", "error", err)
+	}
 
 	m := model{
-		inputs: make([]textinput.Model, 8),
+		stage:        formStage,
+		detectedIPv4: ipv4Detected,
+		detectedIPv6: ipv6Detected,
+		inputs:       make([]textinput.Model, totalInputs),
 	}
 
 	var t textinput.Model
@@ -188,36 +88,43 @@ func main() {
 		t.CharLimit = 150
 
 		switch i {
-		case 0:
+		case inputUsername:
 			t.Placeholder = "Enter Username for ssh access"
 			t.Focus()
 			t.PromptStyle = focusedStyle
 			t.TextStyle = focusedStyle
-		case 1:
+		case inputPassword:
 			t.Placeholder = "Enter Password for ssh access"
-			// t.EchoMode = textinput.EchoPassword
-			// t.EchoCharacter = '•'
-		case 2:
-			t.Placeholder = "Confirm Password for ssh access"
-			// t.EchoMode = textinput.EchoPassword
-			// t.EchoCharacter = '•'
-		case 3:
+		case inputCloudflareEmail:
 			t.Placeholder = "Enter Cloudflare email"
-		case 4:
+		case inputCloudflareAPIKey:
 			t.Placeholder = "Enter Cloudflare API key"
-			// t.EchoMode = textinput.EchoPassword
-			// t.EchoCharacter = '•'
-		// case 5:
-		// 	t.Placeholder = "Enter AWS Access Key ID"
-		// case 6:
-		// 	t.Placeholder = "Enter AWS Secret Access Key"
-		// 	t.EchoMode = textinput.EchoPassword
-		// 	t.EchoCharacter = '•'
-		case 5:
-			t.Placeholder = "Enter SSH port (default 22)"
-		case 6:
-			t.Placeholder = "Enter VPS IPv4"
-		case 7:
+		case inputSSHPort:
+			t.Placeholder = "Enter SSH port"
+		case inputVPSIPv4:
+			if m.detectedIPv4 != "" {
+				t.Placeholder = fmt.Sprintf(
+					"Detected IPv4: %s - verify this is correct",
+					m.detectedIPv4,
+				)
+				t.SetValue(m.detectedIPv4)
+			}
+
+			if m.detectedIPv4 == "" {
+				t.Placeholder = "No IPv4 auto-detected; enter manually"
+			}
+		case inputVPSIPv6:
+			if m.detectedIPv6 != "" {
+				t.Placeholder = fmt.Sprintf(
+					"Detected IPv6: %s - verify this is correct",
+					m.detectedIPv6,
+				)
+				t.SetValue(m.detectedIPv6)
+			}
+			if m.detectedIPv6 == "" {
+				t.Placeholder = "No IPv6 auto-detected; enter manually if needed"
+			}
+		case inputDomain:
 			t.Placeholder = "Enter domain name (e.g., example.com)"
 		}
 
@@ -232,43 +139,29 @@ func main() {
 	}
 
 	finalModel := inputs.(model)
+	if !finalModel.confirmed {
+		fmt.Println("Provisioning cancelled; no changes were applied.")
+		return
+	}
 
 	var domains []string
 	var rootDomain string
 
 	envVars := make(map[string]string, 9)
-	for _, input := range finalModel.inputs {
-		fmt.Printf("%s: %s\n", input.Placeholder, input.Value())
-		switch input.Placeholder {
-		case "Enter Username for ssh access":
-			envVars["USER_NAME"] = input.Value()
-		case "Enter Password for ssh access":
-			envVars["USER_PASSWORD"] = input.Value()
-		// case "Enter Cloudflare email":
-		// 	envvars["CF_EMAIL"] = input.Value()
-		case "Enter Cloudflare API key":
-			envVars["CLOUDFLARE_API_KEY"] = input.Value()
-		// case "Enter AWS Access Key ID":
-		// 	envvars["AWS_ACCESS_KEY_ID"] = input.Value()
-		// case "Enter AWS Secret Access Key":
-		// 	envvars["AWS_SECRET_ACCESS_KEY"] = input.Value()
-		case "Enter domain name (e.g., example.com)":
-			rd := input.Value()
-			rootDomain = rd
 
-			for envName, prefix := range domainPrefix {
-				fullDomain := prefix + "." + rootDomain
+	envVars["USER_NAME"] = finalModel.form.Username
+	envVars["USER_PASSWORD"] = finalModel.form.Password
+	envVars["CLOUDFLARE_API_KEY"] = finalModel.form.CloudflareAPIKey
+	envVars["SSH_PORT"] = finalModel.form.SSHPort
 
-				envVars[envName] = fullDomain
+	rootDomain = finalModel.form.Domain
 
-				domains = append(domains, fullDomain)
-			}
+	for envName, prefix := range domainPrefix {
+		fullDomain := prefix + "." + rootDomain
 
-		case "Enter SSH port (default 22)":
-			envVars["SSH_PORT"] = input.Value()
-		case "Enter VPS IPv4":
-			envVars["VPS_IP"] = input.Value()
-		}
+		envVars[envName] = fullDomain
+
+		domains = append(domains, fullDomain)
 	}
 
 	if releaseVersion != "" {
@@ -361,8 +254,6 @@ func main() {
 	}
 
 	for _, domain := range domains {
-		slog.Info("setting up dns records", "record", domain)
-
 		_, err := client.DNS.Records.New(ctx, dns.RecordNewParams{
 			ZoneID: cloudflare.F(zoneID),
 			Body: dns.ARecordParam{
@@ -370,12 +261,30 @@ func main() {
 				TTL:     cloudflare.F(dns.TTL1),
 				Type:    cloudflare.F(dns.ARecordTypeA),
 				Comment: cloudflare.F("added by mithlond - do not remove"),
-				Content: cloudflare.F(envVars["VPS_IP"]),
+				Content: cloudflare.F(finalModel.detectedIPv4),
 				Proxied: cloudflare.F(true),
 			},
 		})
 		if err != nil {
 			panic(err)
+		}
+
+		if envVars["VPS_IPV6"] != "" {
+			_, err := client.DNS.Records.New(ctx, dns.RecordNewParams{
+				ZoneID: cloudflare.F(zoneID),
+				Body: dns.AAAARecordParam{
+					Name:    cloudflare.F(domain),
+					TTL:     cloudflare.F(dns.TTL1),
+					Type:    cloudflare.F(dns.AAAARecordTypeAAAA),
+					Comment: cloudflare.F("added by mithlond - do not remove"),
+					Content: cloudflare.F(finalModel.detectedIPv6),
+					Proxied: cloudflare.F(true),
+				},
+			})
+			if err != nil {
+				panic(err)
+			}
+
 		}
 	}
 
