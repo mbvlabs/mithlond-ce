@@ -6,19 +6,31 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/cursor"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
 var (
-	focusedStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
-	blurredStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	cursorStyle         = focusedStyle
-	noStyle             = lipgloss.NewStyle()
-	helpStyle           = blurredStyle
-	cursorModeHelpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	errorStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	focusedStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+	blurredStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	cursorStyle          = focusedStyle
+	noStyle              = lipgloss.NewStyle()
+	helpStyle            = blurredStyle
+	cursorModeHelpStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	errorStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	formHeaderStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
+	formInstructionStyle = helpStyle
+	labelStyle           = helpStyle.Bold(true)
+	labelFocusedStyle    = focusedStyle.Bold(true)
+	labelErrorStyle      = errorStyle.Bold(true)
+	inputBoxStyle        = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("238")).
+				Padding(0, 1)
+	inputBoxFocusedStyle = inputBoxStyle.BorderForeground(lipgloss.Color("205"))
+	inputBoxErrorStyle   = inputBoxStyle.BorderForeground(lipgloss.Color("196"))
 
 	focusedButton = focusedStyle.Render("[ Submit ]")
 	blurredButton = fmt.Sprintf("[ %s ]", blurredStyle.Render("Submit"))
@@ -81,9 +93,12 @@ type model struct {
 	stage                stage
 	form                 formData
 	formError            string
+	invalidInputIndex    int
 	inputs               []textinput.Model
 	focusIndex           int
 	cursorMode           cursor.Mode
+	loadingSpinner       spinner.Model
+	secretInputHidden    map[int]bool
 	ipv4                 string
 	ipv6                 string
 	confirmIndex         int
@@ -148,6 +163,40 @@ func (m *model) updateInputs(msg tea.Msg) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+func (m *model) ensureSecretVisibility(index int) {
+	if index < 0 || index >= len(m.inputs) {
+		return
+	}
+
+	if m.secretInputHidden == nil {
+		return
+	}
+
+	hidden, ok := m.secretInputHidden[index]
+	if !ok {
+		return
+	}
+
+	if hidden {
+		m.inputs[index].EchoMode = textinput.EchoPassword
+		m.inputs[index].EchoCharacter = '*'
+		return
+	}
+
+	m.inputs[index].EchoMode = textinput.EchoNormal
+}
+
+func (m *model) toggleSecretVisibility(index int) {
+	if m.secretInputHidden == nil {
+		return
+	}
+	if _, ok := m.secretInputHidden[index]; !ok {
+		return
+	}
+	m.secretInputHidden[index] = !m.secretInputHidden[index]
+	m.ensureSecretVisibility(index)
+}
+
 func (m model) View() string {
 	switch m.stage {
 	case formStage:
@@ -178,16 +227,57 @@ func (m model) rebootCmd(ctx context.Context) tea.Cmd {
 func (m model) formView() string {
 	var b strings.Builder
 
+	b.WriteString(formHeaderStyle.Render("Step 1 of 3 - Configure server and DNS"))
+	b.WriteString("\n")
+	b.WriteString(
+		formInstructionStyle.Render(
+			"Tab/Shift+Tab move | Enter submits | Esc cancels | Ctrl+V toggle secrets",
+		),
+	)
+	b.WriteString("\n")
+
 	if strings.TrimSpace(m.formError) != "" {
+		b.WriteString("\n")
 		b.WriteString(errorStyle.Render(m.formError))
 		b.WriteString("\n")
 	}
 
 	for i := range m.inputs {
-		fmt.Fprintf(&b, "\n%s \n%s", helpStyle.Render(m.inputs[i].Placeholder), m.inputs[i].View())
-		if i < len(m.inputs)-1 {
-			b.WriteRune('\n')
+		if i > 0 {
+			b.WriteString("\n")
 		}
+
+		label := strings.TrimSpace(m.inputs[i].Placeholder)
+		if label == "" {
+			label = "Field"
+		}
+
+		labelRender := labelStyle
+		boxRender := inputBoxStyle
+
+		if m.secretInputHidden != nil {
+			if hidden, ok := m.secretInputHidden[i]; ok {
+				if hidden {
+					label += " (hidden)"
+				} else {
+					label += " (visible)"
+				}
+			}
+		}
+
+		switch i {
+		case m.invalidInputIndex:
+			labelRender = labelErrorStyle
+			boxRender = inputBoxErrorStyle
+		case m.focusIndex:
+			labelRender = labelFocusedStyle
+			boxRender = inputBoxFocusedStyle
+		}
+
+		b.WriteString(labelRender.Render(label))
+		b.WriteString("\n")
+		b.WriteString(boxRender.Render(m.inputs[i].View()))
+		b.WriteString("\n")
 	}
 
 	button := &blurredButton
@@ -290,7 +380,7 @@ func (m model) hostnamesSummary() string {
 		if !ok {
 			continue
 		}
-		lines = append(lines, fmt.Sprintf("%s.%s", prefix, rootDomain))
+		lines = append(lines, fmt.Sprintf("- %s.%s", prefix, rootDomain))
 	}
 
 	if len(lines) == 0 {
@@ -310,7 +400,7 @@ func (m model) confirmView() string {
 	}
 
 	var b strings.Builder
-	b.WriteString(focusedStyle.Render("Review Configuration"))
+	b.WriteString(formHeaderStyle.Render("Step 2 of 3 - Review configuration"))
 	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("Ensure these values are correct before provisioning."))
 	b.WriteString("\n\n")
@@ -350,15 +440,27 @@ func (m model) completeView() string {
 
 	switch {
 	case m.provisioning:
-		b.WriteString(focusedStyle.Render("Provisioning in Progress"))
+		b.WriteString(formHeaderStyle.Render("Step 3 of 3 - Provisioning"))
+		b.WriteString("\n")
+		b.WriteString(
+			focusedStyle.Render(
+				fmt.Sprintf("%s Provisioning in progress", m.loadingSpinner.View()),
+			),
+		)
 		b.WriteString("\n")
 		b.WriteString(
 			helpStyle.Render(
 				"Running install scripts and provisioning resources. This may take a few minutes.",
 			),
 		)
+		b.WriteString("\n")
+		b.WriteString(
+			helpStyle.Render("Keep this window open; we'll advance once everything is ready."),
+		)
 		return b.String()
 	case m.provisionErr != nil:
+		b.WriteString(formHeaderStyle.Render("Step 3 of 3 - Provisioning"))
+		b.WriteString("\n")
 		b.WriteString(focusedStyle.Render("Provisioning Failed"))
 		b.WriteString("\n\n")
 		b.WriteString(m.provisionErr.Error())
@@ -370,6 +472,8 @@ func (m model) completeView() string {
 		b.WriteString(m.renderCompleteButtons())
 		return b.String()
 	default:
+		b.WriteString(formHeaderStyle.Render("Step 3 of 3 - Provisioning"))
+		b.WriteString("\n")
 		b.WriteString(focusedStyle.Render("Provisioning Complete"))
 		b.WriteString("\n")
 		b.WriteString(
@@ -417,6 +521,10 @@ func (m model) completeView() string {
 				"Use your terminal's copy shortcut (e.g. Shift+Ctrl+C) to capture these details before rebooting.",
 			),
 		)
+		b.WriteString("\n")
+		b.WriteString(
+			helpStyle.Render("When you are done, select Reboot to finish applying the changes."),
+		)
 		b.WriteString("\n\n")
 		b.WriteString(m.renderCompleteButtons())
 		return b.String()
@@ -443,10 +551,11 @@ func (m model) completeSummaryRows() []summaryRow {
 	}
 
 	if len(m.provisionResult.hostnames) > 0 {
-		rows = append(
-			rows,
-			summaryRow{label: "Hostnames", value: strings.Join(m.provisionResult.hostnames, "\n")},
-		)
+		formatted := make([]string, 0, len(m.provisionResult.hostnames))
+		for _, host := range m.provisionResult.hostnames {
+			formatted = append(formatted, "- "+host)
+		}
+		rows = append(rows, summaryRow{label: "Hostnames", value: strings.Join(formatted, "\n")})
 	} else {
 		rows = append(rows, summaryRow{label: "Hostnames", value: "(no hostnames configured)"})
 	}
@@ -487,6 +596,11 @@ func (m model) handleFormUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c", "esc":
 			return m, tea.Quit
+		case "ctrl+v":
+			if m.focusIndex >= 0 && m.focusIndex < len(m.inputs) {
+				m.toggleSecretVisibility(m.focusIndex)
+			}
+			return m, nil
 
 		case "ctrl+r":
 			m.cursorMode++
@@ -507,6 +621,7 @@ func (m model) handleFormUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 				sanitized, validationErr := validateAndNormalizeFormData(m.form)
 				if validationErr != nil {
 					m.formError = validationErr.message
+					m.invalidInputIndex = validationErr.inputIndex
 					if validationErr.inputIndex >= 0 && validationErr.inputIndex < len(m.inputs) {
 						cmd := m.setFocus(validationErr.inputIndex)
 						return m, cmd
@@ -515,6 +630,7 @@ func (m model) handleFormUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 
 				m.formError = ""
+				m.invalidInputIndex = -1
 				m.applyFormData(sanitized)
 				m.stage = confirmStage
 				m.confirmIndex = confirmApprove
@@ -551,6 +667,7 @@ func (m model) handleFormUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch keyMsg.Type {
 		case tea.KeyRunes, tea.KeyBackspace, tea.KeyDelete, tea.KeySpace:
 			m.formError = ""
+			m.invalidInputIndex = -1
 		}
 	}
 
@@ -611,12 +728,14 @@ func (m *model) applyFormData(data formData) {
 	}
 	if len(m.inputs) > inputPassword {
 		m.inputs[inputPassword].SetValue(data.Password)
+		m.ensureSecretVisibility(inputPassword)
 	}
 	if len(m.inputs) > inputCloudflareEmail {
 		m.inputs[inputCloudflareEmail].SetValue(data.CloudflareEmail)
 	}
 	if len(m.inputs) > inputCloudflareAPIKey {
 		m.inputs[inputCloudflareAPIKey].SetValue(data.CloudflareAPIKey)
+		m.ensureSecretVisibility(inputCloudflareAPIKey)
 	}
 	if len(m.inputs) > inputSSHPort {
 		m.inputs[inputSSHPort].SetValue(data.SSHPort)
@@ -654,6 +773,7 @@ func (m model) handleConfirmUpdate(ctx context.Context, msg tea.Msg) (tea.Model,
 			return m, tea.Quit
 		case "esc":
 			m.stage = formStage
+			m.invalidInputIndex = -1
 			cmd := m.setFocus(0)
 			return m, cmd
 		case "tab", "shift+tab", "left", "right":
@@ -681,7 +801,7 @@ func (m model) handleConfirmUpdate(ctx context.Context, msg tea.Msg) (tea.Model,
 				m.provisionErr = nil
 				m.stage = completeStage
 				m.completeIndex = 0
-				return m, m.provisioningCmd(ctx)
+				return m, tea.Batch(m.provisioningCmd(ctx), m.loadingSpinner.Tick)
 			}
 
 			m.stage = formStage
@@ -694,6 +814,31 @@ func (m model) handleConfirmUpdate(ctx context.Context, msg tea.Msg) (tea.Model,
 }
 
 func (m model) handleCompleteUpdate(ctx context.Context, msg tea.Msg) (tea.Model, tea.Cmd) {
+	cmds := make([]tea.Cmd, 0, 2)
+	if m.provisioning {
+		var spinCmd tea.Cmd
+		m.loadingSpinner, spinCmd = m.loadingSpinner.Update(msg)
+		if spinCmd != nil {
+			cmds = append(cmds, spinCmd)
+		}
+		if _, ok := msg.(spinner.TickMsg); ok {
+			if len(cmds) == 0 {
+				return m, nil
+			}
+			return m, tea.Batch(cmds...)
+		}
+	}
+
+	withPending := func(next tea.Cmd) (tea.Model, tea.Cmd) {
+		if next != nil {
+			cmds = append(cmds, next)
+		}
+		if len(cmds) == 0 {
+			return m, nil
+		}
+		return m, tea.Batch(cmds...)
+	}
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -701,11 +846,11 @@ func (m model) handleCompleteUpdate(ctx context.Context, msg tea.Msg) (tea.Model
 			return m, tea.Quit
 		case "tab", "shift+tab", "left", "right":
 			if m.provisioning || m.rebooting {
-				return m, nil
+				return withPending(nil)
 			}
 			buttons := m.completeButtons()
 			if len(buttons) == 0 {
-				return m, nil
+				return withPending(nil)
 			}
 
 			if msg.String() == "left" || msg.String() == "shift+tab" {
@@ -721,15 +866,15 @@ func (m model) handleCompleteUpdate(ctx context.Context, msg tea.Msg) (tea.Model
 				m.completeIndex = 0
 			}
 
-			return m, nil
+			return withPending(nil)
 		case "enter":
 			if m.provisioning || m.rebooting {
-				return m, nil
+				return withPending(nil)
 			}
 
 			buttons := m.completeButtons()
 			if len(buttons) == 0 {
-				return m, nil
+				return withPending(nil)
 			}
 
 			if m.completeIndex >= len(buttons) {
@@ -740,14 +885,14 @@ func (m model) handleCompleteUpdate(ctx context.Context, msg tea.Msg) (tea.Model
 			case "Reboot":
 				m.rebooting = true
 				m.rebootErr = nil
-				return m, m.rebootCmd(ctx)
+				return withPending(m.rebootCmd(ctx))
 			case "Exit":
 				return m, tea.Quit
 			}
 		}
 	}
 
-	return m, nil
+	return withPending(nil)
 }
 
 func (m *model) setFocus(index int) tea.Cmd {
@@ -758,6 +903,7 @@ func (m *model) setFocus(index int) tea.Cmd {
 			cmd := m.inputs[i].Focus()
 			m.inputs[i].PromptStyle = focusedStyle
 			m.inputs[i].TextStyle = focusedStyle
+			m.ensureSecretVisibility(i)
 			if cmd != nil {
 				cmds = append(cmds, cmd)
 			}
@@ -767,6 +913,7 @@ func (m *model) setFocus(index int) tea.Cmd {
 		m.inputs[i].Blur()
 		m.inputs[i].PromptStyle = noStyle
 		m.inputs[i].TextStyle = noStyle
+		m.ensureSecretVisibility(i)
 	}
 
 	if len(cmds) == 0 {

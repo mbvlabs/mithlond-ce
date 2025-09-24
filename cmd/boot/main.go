@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/cloudflare/cloudflare-go/v6"
@@ -72,6 +73,8 @@ func getPublicIP(version string) (string, error) {
 }
 
 func main() {
+	slog.Info("mithlond boot cli is loaded and fetching your IPs. it will be ready in 1 sec!")
+
 	ipv4Detected, err := getPublicIP("-4")
 	if err != nil {
 		slog.Warn("could not detect ipv4 defaulting to empty string", "error", err)
@@ -82,10 +85,19 @@ func main() {
 	}
 
 	m := model{
-		stage:  formStage,
-		ipv4:   ipv4Detected,
-		ipv6:   ipv6Detected,
-		inputs: make([]textinput.Model, totalInputs),
+		stage:             formStage,
+		ipv4:              ipv4Detected,
+		ipv6:              ipv6Detected,
+		inputs:            make([]textinput.Model, totalInputs),
+		invalidInputIndex: -1,
+		loadingSpinner: spinner.New(
+			spinner.WithSpinner(spinner.Dot),
+			spinner.WithStyle(focusedStyle),
+		),
+		secretInputHidden: map[int]bool{
+			inputPassword:         true,
+			inputCloudflareAPIKey: true,
+		},
 	}
 
 	var t textinput.Model
@@ -93,6 +105,11 @@ func main() {
 		t = textinput.New()
 		t.Cursor.Style = cursorStyle
 		t.CharLimit = 150
+		t.Prompt = ""
+		t.PromptStyle = noStyle
+		t.PlaceholderStyle = helpStyle
+		t.TextStyle = noStyle
+		t.Width = 48
 
 		switch i {
 		case inputUsername:
@@ -102,10 +119,14 @@ func main() {
 			t.TextStyle = focusedStyle
 		case inputPassword:
 			t.Placeholder = "Enter Password for ssh access"
+			t.EchoMode = textinput.EchoPassword
+			t.EchoCharacter = '*'
 		case inputCloudflareEmail:
 			t.Placeholder = "Enter Cloudflare email"
 		case inputCloudflareAPIKey:
 			t.Placeholder = "Enter Cloudflare API key"
+			t.EchoMode = textinput.EchoPassword
+			t.EchoCharacter = '*'
 		case inputSSHPort:
 			t.Placeholder = "Enter SSH port"
 		case inputVPSIPv4:
@@ -136,6 +157,7 @@ func main() {
 		}
 
 		m.inputs[i] = t
+		m.ensureSecretVisibility(i)
 	}
 
 	p := tea.NewProgram(m)
