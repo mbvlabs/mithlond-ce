@@ -18,6 +18,7 @@ var (
 	noStyle             = lipgloss.NewStyle()
 	helpStyle           = blurredStyle
 	cursorModeHelpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	errorStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 
 	focusedButton = focusedStyle.Render("[ Submit ]")
 	blurredButton = fmt.Sprintf("[ %s ]", blurredStyle.Render("Submit"))
@@ -50,12 +51,12 @@ const (
 type formData struct {
 	Username         string
 	Password         string
-	CloudflareEmail  string
+	CloudflareEmail  string `validate:"omitempty,email"`
 	CloudflareAPIKey string
-	SSHPort          string
-	VPSIPv4          string
-	VPSIPv6          string
-	Domain           string
+	SSHPort          string `validate:"required,ssh_port"`
+	VPSIPv4          string `validate:"omitempty,ipv4"`
+	VPSIPv6          string `validate:"omitempty,ipv6"`
+	Domain           string `validate:"required,root_domain"`
 }
 
 const (
@@ -79,6 +80,7 @@ const (
 type model struct {
 	stage                stage
 	form                 formData
+	formError            string
 	inputs               []textinput.Model
 	focusIndex           int
 	cursorMode           cursor.Mode
@@ -176,6 +178,11 @@ func (m model) rebootCmd(ctx context.Context) tea.Cmd {
 func (m model) formView() string {
 	var b strings.Builder
 
+	if strings.TrimSpace(m.formError) != "" {
+		b.WriteString(errorStyle.Render(m.formError))
+		b.WriteString("\n")
+	}
+
 	for i := range m.inputs {
 		fmt.Fprintf(&b, "\n%s \n%s", helpStyle.Render(m.inputs[i].Placeholder), m.inputs[i].View())
 		if i < len(m.inputs)-1 {
@@ -221,8 +228,6 @@ func (m model) confirmSummaryRows() []summaryRow {
 		{label: "IPv4", value: m.ipv4Summary()},
 		{label: "IPv6", value: m.ipv6Summary()},
 		{label: "Root Domain", value: formatOrPlaceholder(m.form.Domain)},
-		{label: "Basic Auth Username", value: formatOrPlaceholder(m.provisionResult.caddyUsername)},
-		{label: "Basic Auth password", value: formatOrPlaceholder(m.provisionResult.caddyPassword)},
 	}
 
 	rows = append(rows, summaryRow{label: "Hostnames", value: m.hostnamesSummary()})
@@ -433,6 +438,8 @@ func (m model) completeSummaryRows() []summaryRow {
 		{label: "IPv4", value: m.ipv4Summary()},
 		{label: "IPv6", value: m.ipv6Summary()},
 		{label: "Root Domain", value: formatOrPlaceholder(m.form.Domain)},
+		{label: "Basic Auth Username", value: formatOrPlaceholder(m.provisionResult.caddyUsername)},
+		{label: "Basic Auth password", value: formatOrPlaceholder(m.provisionResult.caddyPassword)},
 	}
 
 	if len(m.provisionResult.hostnames) > 0 {
@@ -496,8 +503,19 @@ func (m model) handleFormUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			s := msg.String()
 
 			if s == "enter" && m.focusIndex == len(m.inputs) {
-				// Sync form data before changing stage
 				m.syncFormDataInline()
+				sanitized, validationErr := validateAndNormalizeFormData(m.form)
+				if validationErr != nil {
+					m.formError = validationErr.message
+					if validationErr.inputIndex >= 0 && validationErr.inputIndex < len(m.inputs) {
+						cmd := m.setFocus(validationErr.inputIndex)
+						return m, cmd
+					}
+					return m, nil
+				}
+
+				m.formError = ""
+				m.applyFormData(sanitized)
 				m.stage = confirmStage
 				m.confirmIndex = confirmApprove
 				m.setFocus(len(m.inputs))
@@ -527,6 +545,15 @@ func (m model) handleFormUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	cmd := m.updateInputs(msg)
+	m.enforceSSHPortDigits()
+
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		switch keyMsg.Type {
+		case tea.KeyRunes, tea.KeyBackspace, tea.KeyDelete, tea.KeySpace:
+			m.formError = ""
+		}
+	}
+
 	m.syncFormDataInline()
 	return m, cmd
 }
@@ -560,6 +587,63 @@ func (m *model) syncFormDataInline() {
 	if len(m.inputs) > inputDomain {
 		m.form.Domain = m.inputs[inputDomain].Value()
 	}
+}
+
+func (m *model) enforceSSHPortDigits() {
+	if len(m.inputs) <= inputSSHPort {
+		return
+	}
+
+	current := m.inputs[inputSSHPort].Value()
+	filtered := digitsOnly(current)
+	if current == filtered {
+		return
+	}
+
+	m.inputs[inputSSHPort].SetValue(filtered)
+}
+
+func (m *model) applyFormData(data formData) {
+	m.form = data
+
+	if len(m.inputs) > inputUsername {
+		m.inputs[inputUsername].SetValue(data.Username)
+	}
+	if len(m.inputs) > inputPassword {
+		m.inputs[inputPassword].SetValue(data.Password)
+	}
+	if len(m.inputs) > inputCloudflareEmail {
+		m.inputs[inputCloudflareEmail].SetValue(data.CloudflareEmail)
+	}
+	if len(m.inputs) > inputCloudflareAPIKey {
+		m.inputs[inputCloudflareAPIKey].SetValue(data.CloudflareAPIKey)
+	}
+	if len(m.inputs) > inputSSHPort {
+		m.inputs[inputSSHPort].SetValue(data.SSHPort)
+	}
+	if len(m.inputs) > inputVPSIPv4 {
+		m.inputs[inputVPSIPv4].SetValue(data.VPSIPv4)
+	}
+	if len(m.inputs) > inputVPSIPv6 {
+		m.inputs[inputVPSIPv6].SetValue(data.VPSIPv6)
+	}
+	if len(m.inputs) > inputDomain {
+		m.inputs[inputDomain].SetValue(data.Domain)
+	}
+}
+
+func digitsOnly(s string) string {
+	if s == "" {
+		return s
+	}
+
+	var b strings.Builder
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func (m model) handleConfirmUpdate(ctx context.Context, msg tea.Msg) (tea.Model, tea.Cmd) {
