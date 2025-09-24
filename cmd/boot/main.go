@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log"
 	"log/slog"
 	"math/big"
 	"os"
@@ -30,6 +29,15 @@ const (
 	charset        = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	passwordLength = 8
 )
+
+type provisioningResult struct {
+	envVars       map[string]string
+	hostnames     []string
+	ipv4          string
+	ipv6          string
+	caddyUsername string
+	caddyPassword string
+}
 
 func randomString(length int) string {
 	result := make([]byte, length)
@@ -64,21 +72,20 @@ func getPublicIP(version string) (string, error) {
 }
 
 func main() {
-	ctx := context.Background()
 	ipv4Detected, err := getPublicIP("-4")
 	if err != nil {
-		slog.WarnContext(ctx, "could not detect ipv4 defaulting to empty string", "error", err)
+		slog.Warn("could not detect ipv4 defaulting to empty string", "error", err)
 	}
 	ipv6Detected, err := getPublicIP("-6")
 	if err != nil {
-		slog.WarnContext(ctx, "could not detect ipv6 defaulting to empty string", "error", err)
+		slog.Warn("could not detect ipv6 defaulting to empty string", "error", err)
 	}
 
 	m := model{
-		stage:        formStage,
-		detectedIPv4: ipv4Detected,
-		detectedIPv6: ipv6Detected,
-		inputs:       make([]textinput.Model, totalInputs),
+		stage:  formStage,
+		ipv4:   ipv4Detected,
+		ipv6:   ipv6Detected,
+		inputs: make([]textinput.Model, totalInputs),
 	}
 
 	var t textinput.Model
@@ -102,26 +109,26 @@ func main() {
 		case inputSSHPort:
 			t.Placeholder = "Enter SSH port"
 		case inputVPSIPv4:
-			if m.detectedIPv4 != "" {
+			if m.ipv4 != "" {
 				t.Placeholder = fmt.Sprintf(
 					"Detected IPv4: %s - verify this is correct",
-					m.detectedIPv4,
+					m.ipv4,
 				)
-				t.SetValue(m.detectedIPv4)
+				t.SetValue(m.ipv4)
 			}
 
-			if m.detectedIPv4 == "" {
+			if m.ipv4 == "" {
 				t.Placeholder = "No IPv4 auto-detected; enter manually"
 			}
 		case inputVPSIPv6:
-			if m.detectedIPv6 != "" {
+			if m.ipv6 != "" {
 				t.Placeholder = fmt.Sprintf(
 					"Detected IPv6: %s - verify this is correct",
-					m.detectedIPv6,
+					m.ipv6,
 				)
-				t.SetValue(m.detectedIPv6)
+				t.SetValue(m.ipv6)
 			}
-			if m.detectedIPv6 == "" {
+			if m.ipv6 == "" {
 				t.Placeholder = "No IPv6 auto-detected; enter manually if needed"
 			}
 		case inputDomain:
@@ -132,94 +139,102 @@ func main() {
 	}
 
 	p := tea.NewProgram(m)
-	inputs, err := p.Run()
+	outputs, err := p.Run()
 	if err != nil {
 		fmt.Printf("could not start program: %s\n", err)
 		os.Exit(1)
 	}
 
-	finalModel := inputs.(model)
-	if !finalModel.confirmed {
-		fmt.Println("Provisioning cancelled; no changes were applied.")
-		return
+	if finalModel, ok := outputs.(model); ok {
+		if !finalModel.provisioningStarted {
+			fmt.Println("Provisioning cancelled; no changes were applied.")
+		}
+	}
+}
+
+func runProvisioning(
+	ctx context.Context,
+	data formData,
+	ipv4 string,
+	ipv6 string,
+) (provisioningResult, error) {
+	result := provisioningResult{
+		envVars: make(map[string]string, 16),
 	}
 
-	var domains []string
-	var rootDomain string
-
-	envVars := make(map[string]string, 9)
-
-	envVars["USER_NAME"] = finalModel.form.Username
-	envVars["USER_PASSWORD"] = finalModel.form.Password
-	envVars["CLOUDFLARE_API_KEY"] = finalModel.form.CloudflareAPIKey
-	envVars["SSH_PORT"] = finalModel.form.SSHPort
-
-	rootDomain = finalModel.form.Domain
-
-	for envName, prefix := range domainPrefix {
-		fullDomain := prefix + "." + rootDomain
-
-		envVars[envName] = fullDomain
-
-		domains = append(domains, fullDomain)
+	result.envVars["USER_NAME"] = data.Username
+	result.envVars["USER_PASSWORD"] = data.Password
+	result.envVars["CLOUDFLARE_API_KEY"] = data.CloudflareAPIKey
+	result.envVars["SSH_PORT"] = data.SSHPort
+	if strings.TrimSpace(data.CloudflareEmail) != "" {
+		result.envVars["CLOUDFLARE_EMAIL"] = data.CloudflareEmail
 	}
+
+	rootDomain := strings.TrimSpace(data.Domain)
+	result.envVars["ROOT_DOMAIN"] = rootDomain
 
 	if releaseVersion != "" {
-		envVars["LATEST_RELEASE"] = releaseVersion
-	}
-	if releaseVersion == "" {
-		envVars["LATEST_RELEASE"] = "latest"
+		result.envVars["LATEST_RELEASE"] = releaseVersion
+	} else {
+		result.envVars["LATEST_RELEASE"] = "latest"
 	}
 
-	envVars["ROOT_DOMAIN"] = rootDomain
+	for envName, prefix := range domainPrefix {
+		fullDomain := fmt.Sprintf("%s.%s", prefix, rootDomain)
+		result.envVars[envName] = fullDomain
+		result.hostnames = append(result.hostnames, fullDomain)
+	}
+
+	result.ipv4 = ipv4
+	result.ipv6 = ipv6
 
 	sessionKey, err := generateRandomHex(32)
 	if err != nil {
-		log.Fatal(err)
+		return provisioningResult{}, fmt.Errorf("generate session key: %w", err)
 	}
-
 	sessionEncryptionKey, err := generateRandomHex(32)
 	if err != nil {
-		log.Fatal(err)
+		return provisioningResult{}, fmt.Errorf("generate session encryption key: %w", err)
 	}
-
 	tokenSigningKey, err := generateRandomHex(32)
 	if err != nil {
-		log.Fatal(err)
+		return provisioningResult{}, fmt.Errorf("generate token signing key: %w", err)
 	}
-
 	passwordSalt, err := generateRandomHex(16)
 	if err != nil {
-		log.Fatal(err)
+		return provisioningResult{}, fmt.Errorf("generate password salt: %w", err)
 	}
 
-	envVars["SESSION_KEY"] = sessionKey
-	envVars["SESSION_ENCRYPTION_KEY"] = sessionEncryptionKey
-	envVars["TOKEN_SIGNING_KEY"] = tokenSigningKey
-	envVars["PASSWORD_SALT"] = passwordSalt
+	result.envVars["SESSION_KEY"] = sessionKey
+	result.envVars["SESSION_ENCRYPTION_KEY"] = sessionEncryptionKey
+	result.envVars["TOKEN_SIGNING_KEY"] = tokenSigningKey
+	result.envVars["PASSWORD_SALT"] = passwordSalt
 
 	caddyPassword := randomString(passwordLength)
 	hash, err := bcrypt.GenerateFromPassword([]byte(caddyPassword), bcrypt.DefaultCost)
 	if err != nil {
-		log.Fatal(err)
+		return provisioningResult{}, fmt.Errorf("hash caddy password: %w", err)
 	}
 
-	envVars["CADDY_USER_NAME"] = envVars["USER_NAME"]
-	envVars["CADDY_PASSWORD"] = string(hash)
+	result.envVars["CADDY_USER_NAME"] = result.envVars["USER_NAME"]
+	result.envVars["CADDY_PASSWORD"] = string(hash)
+	result.caddyUsername = result.envVars["USER_NAME"]
+	result.caddyPassword = caddyPassword
 
-	for key, value := range envVars {
-		os.Setenv(key, value)
+	for key, value := range result.envVars {
+		if err := os.Setenv(key, value); err != nil {
+			return provisioningResult{}, fmt.Errorf("set env %s: %w", key, err)
+		}
 	}
 
 	bootScript, err := scripts.Scripts.ReadFile("boot.sh")
 	if err != nil {
-		log.Fatal("Failed to read embedded install script:", err)
+		return provisioningResult{}, fmt.Errorf("read boot script: %w", err)
 	}
 
 	tempScriptPath := "/tmp/mithlond-boot.sh"
-
 	if err := os.WriteFile(tempScriptPath, bootScript, 0o755); err != nil {
-		log.Fatal("Failed to create temporary install script:", err)
+		return provisioningResult{}, fmt.Errorf("write temp boot script: %w", err)
 	}
 	defer os.Remove(tempScriptPath)
 
@@ -230,46 +245,51 @@ func main() {
 	cmd.Env = os.Environ()
 
 	if err := cmd.Run(); err != nil {
-		log.Fatal("Installation failed:", err)
+		return provisioningResult{}, fmt.Errorf("run boot script: %w", err)
 	}
 
-	client := cloudflare.NewClient(
-		option.WithAPIToken(
-			envVars["CLOUDFLARE_API_KEY"],
-		),
-	)
+	client := cloudflare.NewClient(option.WithAPIToken(result.envVars["CLOUDFLARE_API_KEY"]))
+	if rootDomain == "" {
+		return provisioningResult{}, errors.New("root domain is required to create DNS records")
+	}
 
-	res, err := client.Zones.List(ctx, zones.ZoneListParams{
+	res, err := client.Zones.List(ctx, zones.ZoneListParams{ // attempt to fetch zone for domain
 		Name: cloudflare.F(rootDomain),
 	})
 	if err != nil {
-		panic(err)
+		return provisioningResult{}, fmt.Errorf("list zones: %w", err)
 	}
 
 	var zoneID string
 	for _, z := range res.Result {
 		if z.Name == rootDomain {
 			zoneID = z.ID
+			break
 		}
 	}
+	if zoneID == "" {
+		return provisioningResult{}, fmt.Errorf("cloudflare zone not found for %s", rootDomain)
+	}
 
-	for _, domain := range domains {
-		_, err := client.DNS.Records.New(ctx, dns.RecordNewParams{
-			ZoneID: cloudflare.F(zoneID),
-			Body: dns.ARecordParam{
-				Name:    cloudflare.F(domain),
-				TTL:     cloudflare.F(dns.TTL1),
-				Type:    cloudflare.F(dns.ARecordTypeA),
-				Comment: cloudflare.F("added by mithlond - do not remove"),
-				Content: cloudflare.F(finalModel.detectedIPv4),
-				Proxied: cloudflare.F(true),
-			},
-		})
-		if err != nil {
-			panic(err)
+	for _, domain := range result.hostnames {
+		if result.ipv4 != "" {
+			_, err := client.DNS.Records.New(ctx, dns.RecordNewParams{
+				ZoneID: cloudflare.F(zoneID),
+				Body: dns.ARecordParam{
+					Name:    cloudflare.F(domain),
+					TTL:     cloudflare.F(dns.TTL1),
+					Type:    cloudflare.F(dns.ARecordTypeA),
+					Comment: cloudflare.F("added by mithlond - do not remove"),
+					Content: cloudflare.F(result.ipv4),
+					Proxied: cloudflare.F(true),
+				},
+			})
+			if err != nil {
+				return provisioningResult{}, fmt.Errorf("create A record for %s: %w", domain, err)
+			}
 		}
 
-		if envVars["VPS_IPV6"] != "" {
+		if result.ipv6 != "" {
 			_, err := client.DNS.Records.New(ctx, dns.RecordNewParams{
 				ZoneID: cloudflare.F(zoneID),
 				Body: dns.AAAARecordParam{
@@ -277,27 +297,34 @@ func main() {
 					TTL:     cloudflare.F(dns.TTL1),
 					Type:    cloudflare.F(dns.AAAARecordTypeAAAA),
 					Comment: cloudflare.F("added by mithlond - do not remove"),
-					Content: cloudflare.F(finalModel.detectedIPv6),
+					Content: cloudflare.F(result.ipv6),
 					Proxied: cloudflare.F(true),
 				},
 			})
 			if err != nil {
-				panic(err)
+				return provisioningResult{}, fmt.Errorf(
+					"create AAAA record for %s: %w",
+					domain,
+					err,
+				)
 			}
-
 		}
 	}
 
 	slog.Info(
 		"vps is now configured. save the following",
-		"caddy_username",
-		envVars["CADDY_USER_NAME"],
-		"caddy_password",
-		caddyPassword,
+		"caddy_username", result.envVars["CADDY_USER_NAME"],
+		"caddy_password", caddyPassword,
 	)
 
-	rebootCmd := exec.Command("sudo", "reboot")
-	if err := rebootCmd.Run(); err != nil {
-		fmt.Println("Error:", err)
-	}
+	return result, nil
+}
+
+func rebootHost(ctx context.Context) error {
+	cmd := exec.CommandContext(ctx, "sudo", "reboot")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+
+	return cmd.Run()
 }

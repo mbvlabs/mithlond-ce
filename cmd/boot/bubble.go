@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -76,15 +77,22 @@ const (
 )
 
 type model struct {
-	stage        stage
-	form         formData
-	inputs       []textinput.Model
-	focusIndex   int
-	cursorMode   cursor.Mode
-	detectedIPv4 string
-	detectedIPv6 string
-	confirmIndex int
-	confirmed    bool
+	stage                stage
+	form                 formData
+	inputs               []textinput.Model
+	focusIndex           int
+	cursorMode           cursor.Mode
+	ipv4                 string
+	ipv6                 string
+	confirmIndex         int
+	completeIndex        int
+	provisioning         bool
+	provisioningStarted  bool
+	provisioningComplete bool
+	provisionErr         error
+	provisionResult      provisioningResult
+	rebooting            bool
+	rebootErr            error
 }
 
 func (m model) Init() tea.Cmd {
@@ -92,13 +100,39 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	ctx := context.Background()
+
+	switch msg := msg.(type) {
+	case provisioningDoneMsg:
+		m.provisioning = false
+		m.provisioningComplete = true
+		m.provisionErr = msg.err
+		if msg.err == nil {
+			m.provisionResult = msg.result
+		}
+		buttons := m.completeButtons()
+		if len(buttons) == 0 {
+			m.completeIndex = 0
+		} else if m.completeIndex >= len(buttons) {
+			m.completeIndex = 0
+		}
+		return m, nil
+	case rebootDoneMsg:
+		m.rebooting = false
+		m.rebootErr = msg.err
+		if msg.err == nil {
+			return m, tea.Quit
+		}
+		return m, nil
+	}
+
 	switch m.stage {
 	case formStage:
 		return m.handleFormUpdate(msg)
 	case confirmStage:
-		return m.handleConfirmUpdate(msg)
+		return m.handleConfirmUpdate(ctx, msg)
 	case completeStage:
-		return m.handleCompleteUpdate(msg)
+		return m.handleCompleteUpdate(ctx, msg)
 	default:
 		return m, nil
 	}
@@ -122,6 +156,20 @@ func (m model) View() string {
 		return m.completeView()
 	default:
 		return ""
+	}
+}
+
+func (m model) provisioningCmd(ctx context.Context) tea.Cmd {
+	return func() tea.Msg {
+		result, err := runProvisioning(ctx, m.form, m.ipv4, m.ipv6)
+		return provisioningDoneMsg{result: result, err: err}
+	}
+}
+
+func (m model) rebootCmd(ctx context.Context) tea.Cmd {
+	return func() tea.Msg {
+		err := rebootHost(ctx)
+		return rebootDoneMsg{err: err}
 	}
 }
 
@@ -154,6 +202,15 @@ type summaryRow struct {
 	value string
 }
 
+type provisioningDoneMsg struct {
+	result provisioningResult
+	err    error
+}
+
+type rebootDoneMsg struct {
+	err error
+}
+
 func (m model) confirmSummaryRows() []summaryRow {
 	rows := []summaryRow{
 		{label: "Username", value: formatOrPlaceholder(m.form.Username)},
@@ -164,6 +221,8 @@ func (m model) confirmSummaryRows() []summaryRow {
 		{label: "IPv4", value: m.ipv4Summary()},
 		{label: "IPv6", value: m.ipv6Summary()},
 		{label: "Root Domain", value: formatOrPlaceholder(m.form.Domain)},
+		{label: "Basic Auth Username", value: formatOrPlaceholder(m.provisionResult.caddyUsername)},
+		{label: "Basic Auth password", value: formatOrPlaceholder(m.provisionResult.caddyPassword)},
 	}
 
 	rows = append(rows, summaryRow{label: "Hostnames", value: m.hostnamesSummary()})
@@ -180,7 +239,7 @@ func formatOrPlaceholder(value string) string {
 
 func (m model) ipv4Summary() string {
 	override := strings.TrimSpace(m.form.VPSIPv4)
-	detected := strings.TrimSpace(m.detectedIPv4)
+	detected := strings.TrimSpace(m.ipv4)
 
 	switch {
 	case override != "" && detected != "" && override != detected:
@@ -198,7 +257,7 @@ func (m model) ipv4Summary() string {
 
 func (m model) ipv6Summary() string {
 	override := strings.TrimSpace(m.form.VPSIPv6)
-	detected := strings.TrimSpace(m.detectedIPv6)
+	detected := strings.TrimSpace(m.ipv6)
 
 	switch {
 	case override != "" && detected != "" && override != detected:
@@ -282,13 +341,138 @@ func (m model) confirmView() string {
 }
 
 func (m model) completeView() string {
-	return helpStyle.Render("complete view not yet implemented")
+	var b strings.Builder
+
+	switch {
+	case m.provisioning:
+		b.WriteString(focusedStyle.Render("Provisioning in Progress"))
+		b.WriteString("\n")
+		b.WriteString(
+			helpStyle.Render(
+				"Running install scripts and provisioning resources. This may take a few minutes.",
+			),
+		)
+		return b.String()
+	case m.provisionErr != nil:
+		b.WriteString(focusedStyle.Render("Provisioning Failed"))
+		b.WriteString("\n\n")
+		b.WriteString(m.provisionErr.Error())
+		b.WriteString("\n\n")
+		b.WriteString(
+			helpStyle.Render("Fix the issue and restart the installer or press Exit to quit."),
+		)
+		b.WriteString("\n\n")
+		b.WriteString(m.renderCompleteButtons())
+		return b.String()
+	default:
+		b.WriteString(focusedStyle.Render("Provisioning Complete"))
+		b.WriteString("\n")
+		b.WriteString(
+			helpStyle.Render(
+				"Copy these credentials now. They will not be shown again after reboot.",
+			),
+		)
+		b.WriteString("\n\n")
+
+		rows := m.completeSummaryRows()
+		maxLabel := 0
+		for _, row := range rows {
+			if len(row.label) > maxLabel {
+				maxLabel = len(row.label)
+			}
+		}
+
+		labelWidth := maxLabel + 2
+		for _, row := range rows {
+			label := fmt.Sprintf("%s:", row.label)
+			lines := strings.Split(row.value, "\n")
+			fmt.Fprintf(&b, "%-*s %s\n", labelWidth, label, lines[0])
+			for _, line := range lines[1:] {
+				fmt.Fprintf(&b, "%-*s %s\n", labelWidth, "", line)
+			}
+		}
+
+		if m.rebootErr != nil {
+			b.WriteString("\n")
+			b.WriteString(focusedStyle.Render("Reboot Failed"))
+			b.WriteString("\n")
+			b.WriteString(m.rebootErr.Error())
+			b.WriteString("\n")
+		}
+
+		if m.rebooting {
+			b.WriteString("\n")
+			b.WriteString(helpStyle.Render("Reboot command sent; waiting for completion..."))
+			b.WriteString("\n")
+		}
+
+		b.WriteString("\n")
+		b.WriteString(
+			helpStyle.Render(
+				"Use your terminal's copy shortcut (e.g. Shift+Ctrl+C) to capture these details before rebooting.",
+			),
+		)
+		b.WriteString("\n\n")
+		b.WriteString(m.renderCompleteButtons())
+		return b.String()
+	}
 }
 
-// func (m *model) handleFormUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
-//     defer m.syncFormData()
-//     // ... rest of method
-// }
+func (m model) completeSummaryRows() []summaryRow {
+	rows := []summaryRow{
+		{label: "SSH Username", value: formatOrPlaceholder(m.form.Username)},
+		{label: "SSH Password", value: formatOrPlaceholder(m.form.Password)},
+		{label: "SSH Port", value: formatOrPlaceholder(m.form.SSHPort)},
+		{label: "Cloudflare Email", value: formatOrPlaceholder(m.form.CloudflareEmail)},
+		{label: "Cloudflare API Key", value: formatOrPlaceholder(m.form.CloudflareAPIKey)},
+		{
+			label: "Caddy Username",
+			value: formatOrPlaceholder(m.provisionResult.envVars["CADDY_USER_NAME"]),
+		},
+		{label: "Caddy Password", value: formatOrPlaceholder(m.provisionResult.caddyPassword)},
+		{label: "IPv4", value: m.ipv4Summary()},
+		{label: "IPv6", value: m.ipv6Summary()},
+		{label: "Root Domain", value: formatOrPlaceholder(m.form.Domain)},
+	}
+
+	if len(m.provisionResult.hostnames) > 0 {
+		rows = append(
+			rows,
+			summaryRow{label: "Hostnames", value: strings.Join(m.provisionResult.hostnames, "\n")},
+		)
+	} else {
+		rows = append(rows, summaryRow{label: "Hostnames", value: "(no hostnames configured)"})
+	}
+
+	return rows
+}
+
+func (m model) renderCompleteButtons() string {
+	if m.provisioning {
+		return ""
+	}
+
+	buttons := m.completeButtons()
+	var b strings.Builder
+	for i, label := range buttons {
+		if i > 0 {
+			b.WriteString("  ")
+		}
+		if i == m.completeIndex {
+			b.WriteString(focusedStyle.Render(fmt.Sprintf("[ %s ]", label)))
+			continue
+		}
+		b.WriteString(fmt.Sprintf("[ %s ]", blurredStyle.Render(label)))
+	}
+	return b.String()
+}
+
+func (m model) completeButtons() []string {
+	if m.provisionErr != nil {
+		return []string{"Exit"}
+	}
+	return []string{"Reboot", "Exit"}
+}
 
 func (m model) handleFormUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -343,7 +527,6 @@ func (m model) handleFormUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	cmd := m.updateInputs(msg)
-	// Sync form data after updating inputs
 	m.syncFormDataInline()
 	return m, cmd
 }
@@ -379,62 +562,7 @@ func (m *model) syncFormDataInline() {
 	}
 }
 
-// func (m model) handleFormUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
-// 	defer m.syncFormData()
-//
-// 	switch msg := msg.(type) {
-// 	case tea.KeyMsg:
-// 		switch msg.String() {
-// 		case "ctrl+c", "esc":
-// 			return m, tea.Quit
-//
-// 		case "ctrl+r":
-// 			m.cursorMode++
-// 			if m.cursorMode > cursor.CursorHide {
-// 				m.cursorMode = cursor.CursorBlink
-// 			}
-// 			cmds := make([]tea.Cmd, len(m.inputs))
-// 			for i := range m.inputs {
-// 				cmds[i] = m.inputs[i].Cursor.SetMode(m.cursorMode)
-// 			}
-// 			return m, tea.Batch(cmds...)
-//
-// 		case "tab", "shift+tab", "enter", "up", "down":
-// 			s := msg.String()
-//
-// 			if s == "enter" && m.focusIndex == len(m.inputs) {
-// 				m.stage = confirmStage
-// 				m.confirmIndex = confirmApprove
-// 				m.setFocus(len(m.inputs))
-// 				return m, nil
-// 			}
-//
-// 			if s == "up" || s == "shift+tab" {
-// 				m.focusIndex--
-// 			} else {
-// 				m.focusIndex++
-// 			}
-//
-// 			if m.focusIndex > len(m.inputs) {
-// 				m.focusIndex = 0
-// 			} else if m.focusIndex < 0 {
-// 				m.focusIndex = len(m.inputs)
-// 			}
-//
-// 			if m.focusIndex < len(m.inputs) {
-// 				cmd := m.setFocus(m.focusIndex)
-// 				return m, cmd
-// 			}
-//
-// 			m.setFocus(len(m.inputs))
-// 			return m, nil
-// 		}
-// 	}
-//
-// 	return m, m.updateInputs(msg)
-// }
-
-func (m model) handleConfirmUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m model) handleConfirmUpdate(ctx context.Context, msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -460,8 +588,16 @@ func (m model) handleConfirmUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "enter":
 			if m.confirmIndex == confirmApprove {
-				m.confirmed = true
-				return m, tea.Quit
+				if m.provisioning {
+					return m, nil
+				}
+				m.provisioning = true
+				m.provisioningStarted = true
+				m.provisioningComplete = false
+				m.provisionErr = nil
+				m.stage = completeStage
+				m.completeIndex = 0
+				return m, m.provisioningCmd(ctx)
 			}
 
 			m.stage = formStage
@@ -473,47 +609,61 @@ func (m model) handleConfirmUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) handleCompleteUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m model) handleCompleteUpdate(ctx context.Context, msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "esc":
 			return m, tea.Quit
+		case "tab", "shift+tab", "left", "right":
+			if m.provisioning || m.rebooting {
+				return m, nil
+			}
+			buttons := m.completeButtons()
+			if len(buttons) == 0 {
+				return m, nil
+			}
+
+			if msg.String() == "left" || msg.String() == "shift+tab" {
+				m.completeIndex--
+			} else {
+				m.completeIndex++
+			}
+
+			if m.completeIndex < 0 {
+				m.completeIndex = len(buttons) - 1
+			}
+			if m.completeIndex >= len(buttons) {
+				m.completeIndex = 0
+			}
+
+			return m, nil
+		case "enter":
+			if m.provisioning || m.rebooting {
+				return m, nil
+			}
+
+			buttons := m.completeButtons()
+			if len(buttons) == 0 {
+				return m, nil
+			}
+
+			if m.completeIndex >= len(buttons) {
+				m.completeIndex = 0
+			}
+
+			switch buttons[m.completeIndex] {
+			case "Reboot":
+				m.rebooting = true
+				m.rebootErr = nil
+				return m, m.rebootCmd(ctx)
+			case "Exit":
+				return m, tea.Quit
+			}
 		}
 	}
 
 	return m, nil
-}
-
-func (m *model) syncFormData() {
-	if len(m.inputs) == 0 {
-		return
-	}
-
-	if len(m.inputs) > inputUsername {
-		m.form.Username = m.inputs[inputUsername].Value()
-	}
-	if len(m.inputs) > inputPassword {
-		m.form.Password = m.inputs[inputPassword].Value()
-	}
-	if len(m.inputs) > inputCloudflareEmail {
-		m.form.CloudflareEmail = m.inputs[inputCloudflareEmail].Value()
-	}
-	if len(m.inputs) > inputCloudflareAPIKey {
-		m.form.CloudflareAPIKey = m.inputs[inputCloudflareAPIKey].Value()
-	}
-	if len(m.inputs) > inputSSHPort {
-		m.form.SSHPort = m.inputs[inputSSHPort].Value()
-	}
-	if len(m.inputs) > inputVPSIPv4 {
-		m.form.VPSIPv4 = m.inputs[inputVPSIPv4].Value()
-	}
-	if len(m.inputs) > inputVPSIPv6 {
-		m.form.VPSIPv6 = m.inputs[inputVPSIPv6].Value()
-	}
-	if len(m.inputs) > inputDomain {
-		m.form.Domain = m.inputs[inputDomain].Value()
-	}
 }
 
 func (m *model) setFocus(index int) tea.Cmd {
