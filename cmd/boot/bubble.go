@@ -157,7 +157,7 @@ type summaryRow struct {
 func (m model) confirmSummaryRows() []summaryRow {
 	rows := []summaryRow{
 		{label: "Username", value: formatOrPlaceholder(m.form.Username)},
-		{label: "Password", value: maskedOrPlaceholder(m.form.Password)},
+		{label: "Password", value: formatOrPlaceholder(m.form.Password)},
 		{label: "Cloudflare Email", value: formatOrPlaceholder(m.form.CloudflareEmail)},
 		{label: "Cloudflare API Key", value: formatOrPlaceholder(m.form.CloudflareAPIKey)},
 		{label: "SSH Port", value: formatOrPlaceholder(m.form.SSHPort)},
@@ -176,13 +176,6 @@ func formatOrPlaceholder(value string) string {
 		return "(not provided)"
 	}
 	return value
-}
-
-func maskedOrPlaceholder(value string) string {
-	if strings.TrimSpace(value) == "" {
-		return "(not provided)"
-	}
-	return strings.Repeat("•", len(value))
 }
 
 func (m model) ipv4Summary() string {
@@ -292,9 +285,12 @@ func (m model) completeView() string {
 	return helpStyle.Render("complete view not yet implemented")
 }
 
-func (m model) handleFormUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
-	defer m.syncFormData()
+// func (m *model) handleFormUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
+//     defer m.syncFormData()
+//     // ... rest of method
+// }
 
+func (m model) handleFormUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -316,6 +312,8 @@ func (m model) handleFormUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			s := msg.String()
 
 			if s == "enter" && m.focusIndex == len(m.inputs) {
+				// Sync form data before changing stage
+				m.syncFormDataInline()
 				m.stage = confirmStage
 				m.confirmIndex = confirmApprove
 				m.setFocus(len(m.inputs))
@@ -345,8 +343,96 @@ func (m model) handleFormUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	cmd := m.updateInputs(msg)
+	// Sync form data after updating inputs
+	m.syncFormDataInline()
 	return m, cmd
 }
+
+func (m *model) syncFormDataInline() {
+	if len(m.inputs) == 0 {
+		return
+	}
+
+	if len(m.inputs) > inputUsername {
+		m.form.Username = m.inputs[inputUsername].Value()
+	}
+	if len(m.inputs) > inputPassword {
+		m.form.Password = m.inputs[inputPassword].Value()
+	}
+	if len(m.inputs) > inputCloudflareEmail {
+		m.form.CloudflareEmail = m.inputs[inputCloudflareEmail].Value()
+	}
+	if len(m.inputs) > inputCloudflareAPIKey {
+		m.form.CloudflareAPIKey = m.inputs[inputCloudflareAPIKey].Value()
+	}
+	if len(m.inputs) > inputSSHPort {
+		m.form.SSHPort = m.inputs[inputSSHPort].Value()
+	}
+	if len(m.inputs) > inputVPSIPv4 {
+		m.form.VPSIPv4 = m.inputs[inputVPSIPv4].Value()
+	}
+	if len(m.inputs) > inputVPSIPv6 {
+		m.form.VPSIPv6 = m.inputs[inputVPSIPv6].Value()
+	}
+	if len(m.inputs) > inputDomain {
+		m.form.Domain = m.inputs[inputDomain].Value()
+	}
+}
+
+// func (m model) handleFormUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
+// 	defer m.syncFormData()
+//
+// 	switch msg := msg.(type) {
+// 	case tea.KeyMsg:
+// 		switch msg.String() {
+// 		case "ctrl+c", "esc":
+// 			return m, tea.Quit
+//
+// 		case "ctrl+r":
+// 			m.cursorMode++
+// 			if m.cursorMode > cursor.CursorHide {
+// 				m.cursorMode = cursor.CursorBlink
+// 			}
+// 			cmds := make([]tea.Cmd, len(m.inputs))
+// 			for i := range m.inputs {
+// 				cmds[i] = m.inputs[i].Cursor.SetMode(m.cursorMode)
+// 			}
+// 			return m, tea.Batch(cmds...)
+//
+// 		case "tab", "shift+tab", "enter", "up", "down":
+// 			s := msg.String()
+//
+// 			if s == "enter" && m.focusIndex == len(m.inputs) {
+// 				m.stage = confirmStage
+// 				m.confirmIndex = confirmApprove
+// 				m.setFocus(len(m.inputs))
+// 				return m, nil
+// 			}
+//
+// 			if s == "up" || s == "shift+tab" {
+// 				m.focusIndex--
+// 			} else {
+// 				m.focusIndex++
+// 			}
+//
+// 			if m.focusIndex > len(m.inputs) {
+// 				m.focusIndex = 0
+// 			} else if m.focusIndex < 0 {
+// 				m.focusIndex = len(m.inputs)
+// 			}
+//
+// 			if m.focusIndex < len(m.inputs) {
+// 				cmd := m.setFocus(m.focusIndex)
+// 				return m, cmd
+// 			}
+//
+// 			m.setFocus(len(m.inputs))
+// 			return m, nil
+// 		}
+// 	}
+//
+// 	return m, m.updateInputs(msg)
+// }
 
 func (m model) handleConfirmUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
