@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/mbvlabs/mithlond-ce/config"
 	"github.com/mbvlabs/mithlond-ce/database"
 	"github.com/mbvlabs/mithlond-ce/router/cookies"
 	"github.com/starfederation/datastar-go/datastar"
@@ -14,12 +15,16 @@ import (
 )
 
 type Controllers struct {
-	Assets Assets
-	API    API
-	Pages  Pages
+	Assets   Assets
+	API      API
+	Config   config.Config
+	Pages    Pages
+	Users    Users
+	Sessions Sessions
 }
 
 func New(
+	config config.Config,
 	db database.SQLite,
 ) (Controllers, error) {
 	cacheBuilder, err := otter.NewBuilder[string, templ.Component](20)
@@ -32,14 +37,19 @@ func New(
 		return Controllers{}, err
 	}
 
-	assets := newAssets()
+	assets := newAssets(config)
 	pages := newPages(db, pageCacher)
 	api := newAPI(db)
+	users := newUsers(config, db)
+	sessions := newSessions(config, db)
 
 	return Controllers{
 		assets,
 		api,
+		config,
 		pages,
+		users,
+		sessions,
 	}, nil
 }
 

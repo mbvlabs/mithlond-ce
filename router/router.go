@@ -24,27 +24,28 @@ import (
 )
 
 type Router struct {
-	Handler     *echo.Echo
 	controllers controllers.Controllers
+	Handler     *echo.Echo
 }
 
 func New(
 	controllers controllers.Controllers,
+	cfg config.Config,
 ) (*Router, error) {
 	gob.Register(uuid.UUID{})
 	gob.Register(cookies.FlashMessage{})
 
 	router := echo.New()
 
-	if config.App.Env != config.ProdEnvironment {
+	if cfg.App.Env != config.ProdEnvironment {
 		router.Debug = true
 	}
 
-	authKey, err := hex.DecodeString(config.Auth.SessionKey)
+	authKey, err := hex.DecodeString(cfg.Auth.SessionKey)
 	if err != nil {
 		return nil, err
 	}
-	encKey, err := hex.DecodeString(config.Auth.SessionEncryptionKey)
+	encKey, err := hex.DecodeString(cfg.Auth.SessionEncryptionKey)
 	if err != nil {
 		return nil, err
 	}
@@ -56,6 +57,7 @@ func New(
 				encKey,
 			),
 		),
+		authOnly,
 		registerAppContext,
 		registerFlashMessagesContext,
 
@@ -63,20 +65,20 @@ func New(
 			return strings.HasPrefix(c.Request().URL.Path, routes.APIRoutePrefix) ||
 				strings.HasPrefix(c.Request().URL.Path, routes.AssetsRoutePrefix)
 		}, TokenLookup: "cookie:_csrf", CookiePath: "/", CookieDomain: func() string {
-			if config.App.Env == config.ProdEnvironment {
-				return config.App.Domain
+			if cfg.App.Env == config.ProdEnvironment {
+				return cfg.App.Domain
 			}
 
 			return ""
-		}(), CookieSecure: config.App.Env == config.ProdEnvironment, CookieHTTPOnly: true, CookieSameSite: http.SameSiteStrictMode}),
+		}(), CookieSecure: cfg.App.Env == config.ProdEnvironment, CookieHTTPOnly: true, CookieSameSite: http.SameSiteStrictMode}),
 
 		echomw.Recover(),
 		echomw.Logger(),
 	)
 
 	return &Router{
-		router,
 		controllers,
+		router,
 	}, nil
 }
 
@@ -203,5 +205,27 @@ func registerFlashMessagesContext(
 		c.Set(string(cookies.FlashKey), flashes)
 
 		return next(c)
+	}
+}
+
+func authOnly(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		if strings.Contains(c.Request().URL.Path, routes.LoginPage.Path) ||
+			strings.Contains(c.Request().URL.Path, routes.StoreAuthSession.Path) ||
+			strings.Contains(c.Request().URL.Path, "favicon.ico") ||
+			strings.Contains(c.Request().URL.Path, routes.AssetsRoutePrefix) {
+			return next(c)
+		}
+		sess, err := session.Get(config.AuthenticatedSessionName, c)
+		if err != nil {
+			return next(c)
+		}
+
+		isAuth, _ := sess.Values[controllers.SessIsAuthenticated].(bool)
+		if isAuth {
+			return next(c)
+		}
+
+		return c.Redirect(http.StatusTemporaryRedirect, routes.LoginPage.Path)
 	}
 }

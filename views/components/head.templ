@@ -2,7 +2,6 @@ package components
 
 import (
 	"context"
-	"github.com/mbvlabs/mithlond-ce/config"
 	"github.com/mbvlabs/mithlond-ce/router/routes"
 )
 
@@ -68,7 +67,7 @@ templ head(data HeadData) {
 func SetupHead(ctx context.Context, opts ...HeadDataOption) templ.Component {
 
 	data := &HeadData{
-		Title:          config.App.ProjectName,
+		Title:          "Mithlond CE",
 		Description:    "The web development framework for Go.",
 		Slug:           "/",
 		MetaType:       "website",

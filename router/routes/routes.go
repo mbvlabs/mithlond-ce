@@ -29,5 +29,15 @@ var BuildRoutes = func() []Route {
 		apiRoutes...,
 	)
 
+	r = append(
+		r,
+		UserRoutes...,
+	)
+
+	r = append(
+		r,
+		SessionRoutes...,
+	)
+
 	return r
 }()

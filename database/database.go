@@ -25,8 +25,8 @@ type SQLite struct {
 	db *sql.DB
 }
 
-func NewSQLite(ctx context.Context) (SQLite, error) {
-	db, err := sql.Open("sqlite3", config.DB.GetDatabaseURL())
+func NewSQLite(ctx context.Context, cfg config.Config) (SQLite, error) {
+	db, err := sql.Open("sqlite3", cfg.DB.GetDatabaseURL())
 	if err != nil {
 		slog.ErrorContext(ctx, "could not open sqlite database", "error", err)
 		return SQLite{}, err

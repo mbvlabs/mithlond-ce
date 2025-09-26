@@ -3,16 +3,7 @@ package views
 import (
 	"fmt"
 	"github.com/mbvlabs/mithlond-ce/router/routes"
-	"github.com/mbvlabs/mithlond-ce/config"
 )
-
-func updateStatus() string {
-	if config.App.UpdateFailed {
-		return "Latest app update failed - please try again"
-	}
-
-	return "Latest app update succeeded"
-}
 
 templ Home() {
 	@base() {
@@ -23,7 +14,6 @@ templ Home() {
 				data-on-click={ fmt.Sprintf("@get('%v')", routes.UpdateApp.Path) }
 				class="bg-red-600 font-bold hover:bg-red-800 px-6 py-4 rounded text-xl"
 			>Update</button>
-			<p class="my-10 font-bold">Update Status: { updateStatus() }</p>
 		</main>
 	}
 }
