@@ -1,6 +1,10 @@
 package config
 
-import "github.com/caarlos0/env/v10"
+import (
+	"github.com/caarlos0/env/v10"
+)
+
+var AuthenticatedSessionName = "ua-mithlond-ce-dev"
 
 type auth struct {
 	PasswordSalt         string `env:"PASSWORD_SALT"`

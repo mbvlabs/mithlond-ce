@@ -25,11 +25,12 @@ const (
 )
 
 type Assets struct {
+	cfg          config.Config
 	sitemapCache otter.Cache[string, Sitemap]
 	assetsCache  otter.Cache[string, string]
 }
 
-func newAssets() Assets {
+func newAssets(cfg config.Config) Assets {
 	sitemapCacheBuilder, err := otter.NewBuilder[string, Sitemap](1)
 	if err != nil {
 		panic(err)
@@ -50,7 +51,7 @@ func newAssets() Assets {
 		panic(err)
 	}
 
-	return Assets{sitemapCache, robotsCache}
+	return Assets{cfg, sitemapCache, robotsCache}
 }
 
 func (a Assets) enableCaching(c echo.Context, content []byte) echo.Context {
@@ -89,7 +90,7 @@ func (a Assets) Robots(c echo.Context) error {
 		Allow:     "/",
 		Sitemap: fmt.Sprintf(
 			"%s%s",
-			config.App.GetFullDomain(),
+			a.cfg.App.GetFullDomain(),
 			routes.Sitemap.Path,
 		),
 	})
@@ -105,7 +106,7 @@ func (a Assets) Sitemap(c echo.Context) error {
 		return c.XML(http.StatusOK, value)
 	}
 
-	sitemap, err := createSitemap(c)
+	sitemap, err := createSitemap(c, a.cfg.App.GetFullDomain())
 	if err != nil {
 		return err
 	}
@@ -136,9 +137,7 @@ type Sitemap struct {
 	URL     []URL    `xml:"url"`
 }
 
-func createSitemap(c echo.Context) (Sitemap, error) {
-	baseURL := config.App.GetFullDomain()
-
+func createSitemap(c echo.Context, baseURL string) (Sitemap, error) {
 	var urls []URL
 
 	urls = append(urls, URL{

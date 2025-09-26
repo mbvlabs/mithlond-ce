@@ -58,8 +58,9 @@ func startServer(ctx context.Context, srv *http.Server, env string) error {
 	return srv.ListenAndServe()
 }
 
-func setupControllers(sqlite database.SQLite) (controllers.Controllers, error) {
+func setupControllers(cfg config.Config, sqlite database.SQLite) (controllers.Controllers, error) {
 	ctrl, err := controllers.New(
+		cfg,
 		sqlite,
 	)
 	if err != nil {
@@ -69,9 +70,10 @@ func setupControllers(sqlite database.SQLite) (controllers.Controllers, error) {
 	return ctrl, nil
 }
 
-func setupRouter(ctrl controllers.Controllers) (*echo.Echo, error) {
+func setupRouter(ctrl controllers.Controllers, cfg config.Config) (*echo.Echo, error) {
 	router, err := router.New(
 		ctrl,
+		cfg,
 	)
 	if err != nil {
 		return nil, err
@@ -81,19 +83,21 @@ func setupRouter(ctrl controllers.Controllers) (*echo.Echo, error) {
 }
 
 func run(ctx context.Context) error {
+	config := config.NewConfig()
+
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt)
 	defer cancel()
-	sqlite, err := database.NewSQLite(ctx)
+	sqlite, err := database.NewSQLite(ctx, config)
 	if err != nil {
 		return err
 	}
 
-	controllers, err := setupControllers(sqlite)
+	controllers, err := setupControllers(config, sqlite)
 	if err != nil {
 		return err
 	}
 
-	handler, err := setupRouter(controllers)
+	handler, err := setupRouter(controllers, config)
 	if err != nil {
 		return err
 	}
